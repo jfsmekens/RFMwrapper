@@ -1,0 +1,337 @@
+# rfmwrapper
+
+Python wrapper for the [Reference Forward Model (RFM)](http://eodg.atm.ox.ac.uk/RFM/) radiative transfer code.
+
+> Dudhia, A (2017): The Reference Forward Model (RFM), *Journal of Quantitative Spectroscopy and Radiative Transfer* 186, pp. 243–253. doi:[10.1016/j.jqsrt.2016.06.018](https://doi.org/10.1016/j.jqsrt.2016.06.018)
+
+---
+
+## Overview
+
+`rfmwrapper` provides a clean Python interface for setting up, running, and reading output from the RFM Fortran radiative transfer code. It is designed for atmospheric spectroscopy workflows that require:
+
+- Multiple RFM simulations run in parallel (batch processing across CPU cores)
+- Atmospheric profiles manipulated programmatically (plume insertion, gas adjustment, altitude slicing)
+- Spectral output as NumPy arrays for post-processing (ILS convolution, filter integration, resampling)
+- Unit-aware spectral objects with wavenumber ↔ wavelength conversion
+
+---
+
+## Requirements
+
+- Python ≥ 3.9
+- A compiled RFM executable, a HITRAN binary database, and standard atmosphere files.
+  See the [RFM installation guide](https://eodg.atm.ox.ac.uk/RFM/sum/rfm_installation.html) for instructions.
+
+Python dependencies (`numpy`, `scipy`, `matplotlib`, `pandas`, `openpyxl`, `cmcrameri`) are declared in `pyproject.toml` and installed automatically.
+
+---
+
+## Installation
+
+```bash
+conda create -n rfm python=3.11
+conda activate rfm
+pip install -e .
+```
+
+### Configure paths
+
+After installation, tell `rfmwrapper` where your RFM is installed:
+
+```bash
+python -m rfmwrapper configure
+```
+
+This writes to `~/.config/rfmwrapper/config.ini` and persists across sessions. To review:
+
+```bash
+python -m rfmwrapper show
+```
+
+### Path resolution
+
+Three paths are configured independently:
+
+| Path | What it points to |
+|---|---|
+| `rfm_dir` | RFM installation root |
+| `hitran_path` | HITRAN `.bin` file |
+| `atm_dir` | Standard atmosphere files |
+
+Each path is resolved in priority order: runtime override → environment variable → config file → default/derived. Runtime override example:
+
+```python
+import rfmwrapper
+rfmwrapper.__HITRANPATH__ = '/data/shared/HITRAN/hitran2020.bin'
+```
+
+---
+
+## Quick Start
+
+### Single simulation
+
+```python
+import rfmwrapper as rw
+
+model = rw.RFM(
+    type     = 'zenith',
+    wn_start = 2000,
+    wn_stop  = 2600,
+    nperwn   = 10,
+    atm_type = 'FASMLS',
+    gas      = 'H2O CO2',
+    h_obs    = 0.0,
+    adjust   = {'CO2': 420},
+)
+model.run()
+
+tra = model.getSpectra('tra')   # Spectra object
+print(tra.wn.shape, tra.data.shape)
+```
+
+### Nadir geometry with surface
+
+```python
+nadir = rw.RFM(
+    type       = 'nadir',
+    wn_start   = 650,
+    wn_stop    = 1350,
+    nperwn     = 25,
+    atm_type   = 'FASMLS',
+    gas        = 'all',
+    surf_temp  = 300,     # K — surface skin temperature
+    surf_emiss = 1.0,     # NOTE: values < 1 change the meaning of TRA/OPT output;
+                          # see "Surface emissivity" section below
+)
+nadir.run()
+```
+
+### Parallel batch runs
+
+```python
+import numpy as np
+
+jobs = [
+    rw.RFM('layer', 1050, 1250, 25, gas='SO2',
+            vmr={'SO2': vmr}, silent=True)
+    for vmr in np.geomspace(10, 50_000, 16)
+]
+results = rw.runBatch(jobs, max_workers=8)
+spectra = [r.getSpectra('tra') for r in results]
+```
+
+Each instance gets its own isolated temporary work directory automatically.
+
+---
+
+## Geometry types
+
+| `type`    | Description                                                     |
+|-----------|-----------------------------------------------------------------|
+| `'layer'` | Homogeneous slab; specify `temp`, `pres`, `vmr`, `pathlength`   |
+| `'zenith'`| Upward-looking from `h_obs`; elevation in [0.1, 90] deg         |
+| `'nadir'` | Downward-looking toward surface; elevation in [-90, −0.1] deg   |
+
+---
+
+## Output access
+
+`model.run()` produces up to four output types: `'rad'`, `'bbt'`, `'tra'`, `'opt'`. Access via:
+
+```python
+s = model.getSpectra('rad')   # Spectra object
+s.wn          # np.ndarray (n_wn,)          wavenumber axis [cm⁻¹]
+s.data        # np.ndarray (n_spectra, n_wn)
+s.labels      # np.ndarray (n_spectra,)     elevation [deg] / altitude [km] / pathlength [km]
+s.label_type  # str: 'elevation' | 'altitude' | 'layer'
+s.output      # str: 'tra' | 'rad' | 'bbt' | 'opt'
+s.xunit       # str: 'wn' | 'wl'
+s.yunit       # str: e.g. 'mW/(m²·sr·cm⁻¹)' for radiance
+```
+
+---
+
+## Spectra: unit conversion and resampling
+
+`Spectra` objects carry axis-unit state and support in-place conversion:
+
+```python
+rad_wl = model.getSpectra('rad').toWavelength()
+# rad_wl.wn holds wavelength [µm]; data converted with Jacobian dν/dλ
+# rad_wl.yunit = 'mW/(m²·sr·µm)'
+
+rad_wn = rad_wl.toWavenumber()   # inverse conversion; raises ValueError if already in wn
+```
+
+Resample onto a coarser grid (e.g. after ILS convolution):
+
+```python
+s_coarse = model.getSpectra('tra').resample(dx=0.25)        # uniform spacing [cm⁻¹]
+s_custom = model.getSpectra('tra').resample(x_out=my_grid)  # explicit axis
+```
+
+The standalone `resampleSpectra(spectra, dx, x_out)` works identically and also accepts `ILSOut` objects.
+
+---
+
+## ILS convolution
+
+Compute and apply an Instrument Line Shape kernel:
+
+```python
+# Using a named instrument from the built-in library
+model.applyILS('IASI')
+ils_out = model.getILSOut('rad')   # ILSOut object, same structure as Spectra
+
+# Or with explicit parameters
+model.applyILS(fov=0.030, max_opd=1.7, apod_type='NB medium')
+
+# Standalone function
+ils = rw.makeILS(fov=0.030, max_opd=1.7, nper_wn=25, wn=1000,
+                 apod_type='Gaussian', fwhm_wn=0.5)
+ils_out = rw.applyILS(spectra, ils)
+```
+
+### Instrument library
+
+```python
+rw.listInstruments()           # ['IASI', 'Midac']
+params = rw.loadILSParams('IASI')
+# {'max_opd': 2.0, 'fov': 0.01465, 'apod_type': 'Gaussian', 'fwhm_wn': 0.5, ...}
+```
+
+Bundled instruments:
+
+| Name    | Description                                         |
+|---------|-----------------------------------------------------|
+| `Midac` | Midac M2401 open-path FTIR (NB medium, OPD=1.7 cm)  |
+| `IASI`  | IASI on MetOp L1C (Gaussian, 0.5 cm⁻¹ FWHM)        |
+
+### Supported apodization types
+
+`Boxcar`, `Triangular`, `Hann`, `Hamming`, `Happ-Genzel`, `Blackman-Harris`, `Nuttall`, `Kaiser`, `Tukey`, `Cosine`, `Lorentz`, `Gaussian`, `NB weak`, `NB medium`, `NB strong`
+
+For `Gaussian`, pass `fwhm_wn` to pin the spectral FWHM; otherwise a default width proportional to `1/max_opd` is used.
+
+---
+
+## Filter convolution
+
+Integrate spectra over imager filter response functions:
+
+```python
+model.applyFilters(sensor='ASTER')
+filt = model.getFilterOut('ASTER', 'rad')   # FilterOut object
+filt.wl          # band centre wavelengths [µm]
+filt.data        # band-integrated values (n_spectra, n_bands)
+filt.band_names  # ['Band_10', 'Band_11', ...]
+
+rw.listSensors()   # list all bundled sensors
+```
+
+Radiance spectra are automatically converted to wavelength space [mW/(m²·sr·µm)] before integration. All other output types (transmission, optical depth, brightness temperature) use wavenumber-to-wavelength axis conversion only.
+
+---
+
+## Atmosphere manipulation
+
+```python
+atm = rw.readAtm('/path/to/std.atm')
+atm = rw.adjustAtm(atm, 'CO2', 420)              # scale surface VMR to 420 ppmv
+atm = rw.insertPlume(atm, h=2.0, th=0.5,
+                     plume={'SO2': 500})           # triangular plume at 2 km
+atm = rw.sliceAtm(atm, h1=0.0, h2=20.0)          # trim to 0–20 km
+rw.writeAtm(atm, 'modified.atm')
+```
+
+---
+
+## Surface emissivity
+
+In nadir geometry, `surf_emiss` controls surface thermal emission. Setting it to a value below 1.0 changes the physical meaning of the `TRA` and `OPT` outputs:
+
+| `surf_emiss` | `TRA` output |
+|---|---|
+| `None` or `1.0` | One-way atmospheric transmittance T_atm |
+| `< 1.0` | Reflected-path transmittance `(1−ε)·T_atm²` |
+
+A warning is logged when `surf_emiss < 1` and `TRA`/`OPT` are requested. Use `surf_emiss=1.0` (blackbody) unless you specifically need to model the reflected contribution.
+
+---
+
+## Unit conversion utilities
+
+```python
+# Radiometric
+rw.rad(wn, temp)               # Planck radiance [mW/(m²·sr·cm⁻¹)]
+rw.bbt(wn, radiance)           # brightness temperature [K]
+rw.wn2wl(wn, L_wn)            # wavenumber → wavelength space (with Jacobian)
+rw.wl2wn(wl, L_wl)            # wavelength → wavenumber space
+
+# Column / concentration
+rw.ppm2scd(ppm, pathlength)    # VMR [ppmv] → slant column density [molec/cm²]
+rw.scd2ppm(scd, pathlength)
+rw.mcm2gm2(mcm, species)       # molec/cm² → g/m²
+rw.ppmm2mcm(ppmm, species)     # ppm·m → molec/cm²
+
+# Humidity
+rw.RH2ppm(RH, pres, temp)      # relative humidity [%] → H₂O VMR [ppmv]
+rw.RH2gm3(RH, pres, temp)      # relative humidity [%] → absolute humidity [g/m³]
+rw.gm32RH(gm3, pres, temp)     # absolute humidity [g/m³] → relative humidity [%]
+
+# Temperature
+rw.c2k(deg); rw.k2c(kelv)      # Celsius ↔ Kelvin
+rw.f2c(deg); rw.c2f(deg)       # Fahrenheit ↔ Celsius
+```
+
+---
+
+## Standard atmospheres
+
+| Key      | Description            |
+|----------|------------------------|
+| `FASSTD` | US Standard            |
+| `FASMLS` | Mid-Latitude Summer    |
+| `FASMLW` | Mid-Latitude Winter    |
+| `FASSAS` | Sub-Arctic Summer      |
+| `FASSAW` | Sub-Arctic Winter      |
+| `FASTRO` | Tropical               |
+| `MIPDAY` | MIPAS Day              |
+| `MIPNGT` | MIPAS Night            |
+
+---
+
+## Module structure
+
+```
+rfmwrapper/
+├── __init__.py       Public API surface
+├── __main__.py       python -m rfmwrapper configure / show
+├── objects.py        RFM class, Spectra / ILSOut / FilterOut dataclasses, runBatch
+├── functions.py      Atmosphere I/O, Planck, ILS kernel, filter convolution,
+│                     unit conversions, spectral resampling
+├── config.py         Path resolution: config file, env var, fallback chain
+├── constants.py      Gas species lists, molecular weights, plot colours/cmaps
+├── standards.txt     Default VMR / aerosol properties for all species
+├── instruments.json  Bundled ILS parameters (Midac, IASI)
+└── filters/          Imager filter response CSVs (ASTER, MMT-gasCam, ...)
+```
+
+---
+
+## Context manager
+
+```python
+with rw.RFM('layer', 2000, 2600, 10, gas='SO2') as model:
+    model.run()
+    s = model.getSpectra('tra')
+# temporary work directory cleaned up automatically
+```
+
+---
+
+## License
+
+This wrapper is provided as-is for research use. The RFM itself is subject to its own [license terms](http://eodg.atm.ox.ac.uk/RFM/).

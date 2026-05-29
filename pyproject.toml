@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rfmwrapper"
+version = "0.2.0"
+description = "Python wrapper for the Reference Forward Model (RFM) radiative transfer code"
+authors = [{name = "jfsmekens"}]
+license = {text = "MIT"}
+requires-python = ">=3.9"
+keywords = ["radiative-transfer", "atmosphere", "spectroscopy", "RFM", "FTIR"]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pandas",
+    "openpyxl",
+    "cmcrameri",
+]
+
+[project.urls]
+Repository = "https://github.com/jfsmekens/rfmwrapper"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rfmwrapper*"]
+
+[tool.setuptools.package-data]
+rfmwrapper = ["standards.txt", "filters/*/*.csv", "instruments.json"]

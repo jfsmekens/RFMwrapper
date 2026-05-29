@@ -1,0 +1,10 @@
+numpy
+scipy
+matplotlib
+pandas
+openpyxl
+cmcrameri
+
+[dev]
+pytest
+pytest-cov
