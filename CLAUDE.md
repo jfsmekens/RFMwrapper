@@ -125,25 +125,55 @@ This requires a proper `pyproject.toml` or `setup.py` at the project root.
 
 ## Project Description
 
-<!-- Brief description of this project's purpose and goals -->
+Python wrapper for the **RFM (Reference Forward Model)** Fortran radiative transfer code (Dudhia 2017, JQSRT 186, pp. 243–253). RFMwrapper handles driver-file generation, subprocess execution, and output parsing for RFM v5.21+. It supports nadir, zenith, layer, and limb geometry; Jacobians; binary I/O; cross-section (XSC) species including aerosols; spectral convolution with instrument line shape (ILS) functions and satellite sensor filter response functions; and batch parallelism via `ProcessPoolExecutor`.
 
 ## Key Concepts and Data Structures
 
-<!-- Domain-specific terminology, core data structures, important algorithms -->
+- **`RFM` class** (`objects.py`) — central object: instantiate with geometry/atmosphere/output params → `run()` → `getSpectra()` → optionally `applyILS()` / `applyFilters()`.
+- **`Spectra` dataclass** — `(wn, data, labels, label_type, output, xunit, yunit)`; `data` is always `(n_spectra, n_wn)`.
+- **`FilterOut` / `ILSOut` dataclasses** — outputs of `applyFilters()` / `applyILS()`.
+- **Geometry types:** `'nadir'`, `'zenith'`, `'layer'` (HOM), `'limb'` (requires `tan_heights`).
+- **Spectral outputs:** `out='RAD BBT OPT TRA'`; Jacobians via `jacobians={'TEM': None, 'H2O': None}`.
+- **Atmosphere:** standard profiles from `rfmwrapper/standards.txt`; `adjustAtm()` / `insertPlume()` / `sliceAtm()` for modification.
+- Deep detail in `memory/project_overview.md`.
 
 ## External Dependencies
 
-<!-- Non-standard dependencies and their purposes in this project -->
+- **RFM binary** — Fortran executable at `$RFM_DIR/bin/rfm` (configured via env var or `rfmwrapper configure`).
+- **HITRAN** — line-by-line database binary at `$RFM_DIR/hitran/`.
+- **cmcrameri** — perceptually uniform scientific colormaps (`pip install cmcrameri`); used throughout `plotting.py`.
+- **pyOptimalEstimation** — optimal estimation retrieval (`pip install pyOptimalEstimation`); used in `demo_retrieval.py`.
+- **Standard scientific stack** — numpy, scipy, matplotlib, pandas.
 
 ## Reference Materials
 
-<!-- For ports: location of original codebase
-     Relevant papers, documentation, or specifications -->
+- Dudhia, A. (2017). The Reference Forward Model (RFM). *JQSRT*, 186, 243–253.
+- RFM v5.21 user guide: `$RFM_DIR/doc/` on the local machine.
+- `docs/aerosol_xsc_interface.md` — derivation of aerosol XSC unit conventions and multi-species workaround.
+- RTTOV SRF library: downloaded to `rfmwrapper/filters/`; fetch script at `tools/download_rttov_srfs.py`.
 
 ## Known Constraints and Quirks
 
-<!-- Hardware limitations, data format peculiarities, legacy compatibility requirements -->
+- **XSC section format:** bare file paths only — `FILXSC = ...` keyword syntax is rejected by RFM (`F-SCNXSC` error).
+- **XSC comment lines:** XSC files must contain no `!` comment lines — RFM aborts with `F-SCNXSC IOSTAT=5010`.
+- **Aerosol species limit:** max 2 simultaneous user-defined XSC species per run; a 3rd causes a silent crash. `writeDrv()` raises `ValueError` as a guard.
+- **Aerosol units:** species named `aerosol` (ID 100) are treated as km⁻¹ direct; all other XSC names go through the cm²/molec + ideal gas law path — see `docs/aerosol_xsc_interface.md`.
+- **Jacobian filenames:** RFM writes `{out}{elev}_{param}{level_m}.out` — no `jac_` prefix. N altitude levels → N−2 output files (boundary levels are interpolation anchors only).
+- **LEV output filenames:** RFM writes `{out}{elev}_{alt_m}{up|dn}.out` for `*LEV` section outputs. The `up`/`dn` suffix distinguishes LEV files from Jacobian files (which end in a parameter name like `tem05000`). `_readOut` uses `_decode_lev_suffix()` to tell them apart.
+- **Binary output:** little-endian Fortran sequential unformatted; 4-byte record markers; float32 by default, float64 with `dbl=True`.
+- **macOS multiprocessing:** `runBatch()` uses `ProcessPoolExecutor`; calling scripts **must** have `if __name__ == '__main__':` guard (macOS uses spawn, not fork).
+- **`surf_emiss < 1` (nadir):** TRA and OPT correctly output the one-way atmospheric transmittance independent of surface emissivity (confirmed v5.21). Note: RFM v5.10 had an undocumented defect where TRA/OPT were contaminated by `(1−ε)·T_atm²` when `surf_emiss < 1`; this is fixed in v5.21.
 
 ## Project-Specific Conventions
 
-<!-- Any conventions that override or extend the general guidelines above -->
+- Naming follows the rules in the **Naming Conventions** section above; see also `memory/naming_conventions.md`.
+- Filter CSVs: mandatory `wn` [cm⁻¹] and `T` columns; optional `wl` [µm]; sorted ascending by `wn`.
+- All plotting functions live in `rfmwrapper/plotting.py` and return `(fig, ax[es])`; no `plt.show()` calls inside library code.
+- Test outputs go to `test/demo_output/<demo_name>/`; intermediate/temp files go to `/tmp`.
+
+## Session Memory
+
+A persistent memory index lives at `memory/MEMORY.md` in this project root.
+Read it at the start of each session to recover context from prior work.
+The index points to individual files covering completed work, open TODOs,
+naming conventions, conda environment, and project architecture.

@@ -118,6 +118,15 @@ def get_aria_dir() -> str:
     return os.path.join(get_rfm_dir(), 'ARIA')
 
 
+def get_xsc_dir() -> str:
+    """Return the default XSC data directory ($rfm_dir/xsc/).
+
+    Store concatenated ``.xsc`` files here so they can be referenced by name
+    rather than by full path (e.g. ``xsc_dir=__XSCDIR__``).
+    """
+    return os.path.join(get_rfm_dir(), 'xsc')
+
+
 def get_out_dir() -> str:
     """Return the default output directory ($rfm_dir/output/)."""
     return os.path.join(get_rfm_dir(), 'output')

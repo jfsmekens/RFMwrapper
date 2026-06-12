@@ -25,7 +25,25 @@ possible_gases = rfm_gases + special_gases
 atm_fields = {"HGT": "Height", "PRE": "Pressure", "TEM": "Temperature"}
 atm_units = {"HGT": "[km]", "PRE": "[mb]", "TEM": "[K]"}
 
-possible_aeros = ["H2SO4", "ASH", "WATER"]
+# Known aerosol/particulate species for use with the XSC mechanism.
+# These are treated differently from gas-phase molecules: the ATM profile
+# value is a dimensionless scaling factor, not a VMR [ppmv].
+#
+# 'AEROSOL' is RFM molecule ID 100 — the only slot with native km⁻¹ treatment.
+# All others require the synthetic multi-tabulation pre-scaling approach
+# (see docs/aerosol_xsc_interface.md).  Add new species here as needed.
+AEROSOL_SPECIES = {
+    'AEROSOL',   # RFM molecule 100 — native km⁻¹ slot
+    'ASH',       # volcanic ash
+    'H2SO4',     # sulphuric acid aerosol
+    'HNO3',      # nitric acid aerosol (distinct from gas-phase HNO3)
+    'WATER',     # liquid water droplets
+    'ICE',       # water ice
+    'SOOT',      # black carbon / soot
+}
+
+# Keep old name as alias for backward compatibility
+possible_aeros = sorted(AEROSOL_SPECIES)
 
 # Interesting Ratios: If any combination of 2 targets makes one of those ratios, it will be plotted
 interesting_ratios = ["CO2:SO2", "H2O:SO2", "H2O:CO2", "CO:SO2", "SO2:HCl", "SO2:HF", "SO2:H2S", "SO2:SO3",
@@ -71,28 +89,32 @@ weights = {"H2O":   18.01528,
            "ICE":   18.01528,   # H2O ice aerosol
            }
 
+# Fallback colour and colourmap for species not in the lookup dicts.
+_FALLBACK_COLOR: str = '#555555'
+_FALLBACK_CMAP = cmc.grayC_r
+
 # Plot Colors: A dedicated color for each target species
 plot_colors = {"H2O_sc": "lightblue",
-               "H2O": "tab:blue",
-               "OH": "tab:blue", 
-               "CO2": "tab:orange",
-               "O3": "tab:pink",
+               "H2O": "#2166ac",       # deep ocean blue
+               "OH": "tab:blue",
+               "CO2": "#e07800",       # amber orange
+               "O3": "#762a83",        # purple
                "O2": "tab:red",
-               "N2O": "gold",
+               "N2O": "#b5810a",       # golden brown
                "N2": "darkgreen",
                "NO": "brown",
                "NO2": "brown",
-               "CH4": "darkviolet",
-               "SO2": "tab:red",
+               "CH4": "#4a148c",       # deep violet
+               "SO2": "#d4001a",       # strong red
                "SO3": "tab:orange",
-               "CO": "maroon",
+               "CO": "#7b1f1f",        # dark brown-red
                "OCS": "goldenrod",
-               "HCl": "darkcyan",
-               "HF": "deeppink",
-               "NH3": "goldenrod",
-               "HNO3": "goldenrod", 
+               "HCl": "#006064",       # dark teal
+               "HF": "#ad1457",        # deep rose
+               "NH3": "#558b2f",       # forest green
+               "HNO3": "goldenrod",
                "SiF4": "purple",
-               "H2S": "olivedrab",
+               "H2S": "#3e4906",       # dark olive
                "H2SO4": "tab:green",
                "ASH": "tab:grey",
                "WATER": "deepskyblue",
@@ -155,26 +177,33 @@ dark_colors = {"H2O_sc": "lightblue",
                "intercept": "tab:cyan",
                "confidence": "w"}
 
-# Plot Color Maps: A dedicated colormap for each species
-plot_cmaps = {"H2O": cm["Blues"],
-              "CO2": cm["Oranges"],
-              "O3": cmc.acton_r,
-              "SO2": cm["Reds"],
-              "CO": cm["YlOrBr"],
-              "HCl": cm["GnBu"],
-              "HF": cm["PuRd"],
-              "NH3": cm["YlOrBr"],
-              "SiF4": cm["Purples"],
-              "H2S": cm["YlOrBr"],
-              "H2SO4": cm["Greens"],
-              "ASH": cm["Greys"],
-              "WATER": cmc.devon_r,
-              "R2": cm["Greys"],
-              "RMSE": cm["Greys"],
-              "dt_prox": cm["Oranges"],
-              "dt_plume": cm["Reds"],
-              "temp": cmc.hawaii_r,
-              "pres": cmc.bamako_r}
+# Plot Color Maps: A dedicated sequential colourmap for each species
+plot_cmaps = {
+    # Primary gas species — all cmcrameri _r variants
+    'H2O':      cmc.nuuk_r,
+    'CO2':      cmc.bilbao_r,
+    'O3':       cmc.acton_r,
+    'SO2':      cmc.lajolla_r,
+    'CH4':      cmc.devon_r,
+    'CO':       cmc.tokyo_r,
+    'HCl':      cmc.davos_r,
+    'HF':       cmc.lipari_r,
+    'N2O':      cmc.hawaii_r,
+    'NH3':      cmc.bamako_r,
+    'H2S':      cmc.turku_r,
+    # Aerosol / non-gas species
+    'H2SO4':    cm['Greens'],
+    'ASH':      cm['Greys'],
+    'WATER':    cmc.nuuk_r,
+    'SiF4':     cm['Purples'],
+    # Diagnostic variables
+    'R2':       cm['Greys'],
+    'RMSE':     cm['Greys'],
+    'dt_prox':  cm['Oranges'],
+    'dt_plume': cm['Reds'],
+    'temp':     cmc.hawaii_r,
+    'pres':     cmc.bamako_r,
+}
 
 # Pretty name: Mathtext for each species to use in labels
 pretty_names = {"H2O": "$H_2O$",

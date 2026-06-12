@@ -128,11 +128,12 @@ Each instance gets its own isolated temporary work directory automatically.
 
 ## Geometry types
 
-| `type`    | Description                                                     |
-|-----------|-----------------------------------------------------------------|
-| `'layer'` | Homogeneous slab; specify `temp`, `pres`, `vmr`, `pathlength`   |
-| `'zenith'`| Upward-looking from `h_obs`; elevation in [0.1, 90] deg         |
-| `'nadir'` | Downward-looking toward surface; elevation in [-90, −0.1] deg   |
+| `type`    | Description                                                                  |
+|-----------|------------------------------------------------------------------------------|
+| `'layer'` | Homogeneous slab; specify `temp`, `pres`, `vmr`, `pathlength`                |
+| `'zenith'`| Upward-looking from `h_obs`; elevation in [0.1, 90] deg                     |
+| `'nadir'` | Downward-looking toward surface; elevation in [-90, −0.1] deg                |
+| `'limb'`  | Limb-viewing; specify `tan_heights=[...]` [km] and optionally `h_obs` [km]  |
 
 ---
 
@@ -231,7 +232,88 @@ filt.band_names  # ['Band_10', 'Band_11', ...]
 rw.listSensors()   # list all bundled sensors
 ```
 
-Radiance spectra are automatically converted to wavelength space [mW/(m²·sr·µm)] before integration. All other output types (transmission, optical depth, brightness temperature) use wavenumber-to-wavelength axis conversion only.
+Convolution is performed in wavenumber space (∫L(ν)·T(ν)dν / ∫T(ν)dν) for all output types. Use `listPlatforms(sensor)` for multi-platform instruments (e.g. `'GOES-ABI'`) and `readRTTOVsrf(path)` to import custom RTTOV-format SRF files.
+
+---
+
+## Limb geometry
+
+```python
+limb = rw.RFM(
+    type        = 'limb',
+    wn_start    = 550,
+    wn_stop     = 1350,
+    nperwn      = 10,
+    atm_type    = 'FASMLS',
+    gas         = 'H2O CO2 O3',
+    tan_heights = [5, 10, 15, 20, 30],   # [km]
+    h_obs       = 800,                    # satellite altitude [km]
+)
+limb.run()
+s = limb.getSpectra('rad')   # labels = tangent heights [km]
+```
+
+---
+
+## Cross-sections (XSC species)
+
+Aerosol and heavy molecules (SF₆, CFCs, etc.) can be included via HITRAN XSC files:
+
+```python
+model = rw.RFM(
+    type     = 'nadir',
+    wn_start = 900, wn_stop = 1000, nperwn = 25,
+    gas      = 'H2O AEROSOL',
+    xsc      = {'AEROSOL': '/path/to/aerosol.xsc'},
+)
+```
+
+Prepare a HITRAN XSC dataset for RFM with `concatXSC`:
+
+```python
+from glob import glob
+rw.concatXSC(glob('/data/sf6_xsc/*.xsc'), T_range=(200, 320))
+# → writes $RFM_DIR/xsc/sf6.xsc
+```
+
+---
+
+## Ray-path diagnostics
+
+```python
+model = rw.RFM(..., diagnostics=True)
+model.run()
+pth = model.getRayPath()               # raw text lines from RFM PTH file
+parsed = rw.parseRayPath(pth)          # {header, gases, totals}
+
+fig, ax = rw.plotRayGeometry(parsed)   # slant path length per layer
+fig, ax = rw.plotRayPath(parsed, 'H2O')  # slant column per layer for one gas
+```
+
+---
+
+## Plotting
+
+All standalone figure functions live in `rfmwrapper.plotting` and return `(fig, ax)` or `(fig, axes)`:
+
+```python
+import rfmwrapper as rw
+
+rw.applyStyle()                               # set rcParams to the canonical style
+fig, ax  = rw.plotSpectra(spectra, species='SO2')
+fig, axes = rw.plotSpectraGrid({'rad': s_rad, 'tra': s_tra})
+fig, ax  = rw.plotAtmProfile(atm, 'H2O')
+fig, axes = rw.plotAtmGrid(atm, ['H2O', 'CO2', 'TEM', 'PRE'])
+fig, ax  = rw.plotLimbMap(spectra)
+fig, ax  = rw.plotJacobians(jac_spectra)
+```
+
+Species-specific colours and colormaps (cmcrameri-based) are looked up automatically:
+
+```python
+color = rw.get_species_color('SO2')   # '#d4001a'
+cmap  = rw.get_species_cmap('H2O')   # cmc.nuuk_r
+```
 
 ---
 
@@ -250,14 +332,7 @@ rw.writeAtm(atm, 'modified.atm')
 
 ## Surface emissivity
 
-In nadir geometry, `surf_emiss` controls surface thermal emission. Setting it to a value below 1.0 changes the physical meaning of the `TRA` and `OPT` outputs:
-
-| `surf_emiss` | `TRA` output |
-|---|---|
-| `None` or `1.0` | One-way atmospheric transmittance T_atm |
-| `< 1.0` | Reflected-path transmittance `(1−ε)·T_atm²` |
-
-A warning is logged when `surf_emiss < 1` and `TRA`/`OPT` are requested. Use `surf_emiss=1.0` (blackbody) unless you specifically need to model the reflected contribution.
+In nadir geometry, `surf_emiss` controls surface thermal emission. With RFM v5.21+, `TRA` and `OPT` correctly output the one-way atmospheric transmittance regardless of `surf_emiss`; the surface emissivity only affects the `RAD` and `BBT` outputs via the surface emission term. Use `surf_emiss=1.0` (blackbody) as the default unless you are explicitly modelling surface reflectance in `RAD`.
 
 ---
 
@@ -311,12 +386,16 @@ rfmwrapper/
 ├── __main__.py       python -m rfmwrapper configure / show
 ├── objects.py        RFM class, Spectra / ILSOut / FilterOut dataclasses, runBatch
 ├── functions.py      Atmosphere I/O, Planck, ILS kernel, filter convolution,
-│                     unit conversions, spectral resampling
+│                     XSC utilities, unit conversions, spectral resampling,
+│                     ray-path parsing
+├── plotting.py       All standalone figure functions (no plt.show())
 ├── config.py         Path resolution: config file, env var, fallback chain
-├── constants.py      Gas species lists, molecular weights, plot colours/cmaps
+├── constants.py      Gas species lists, AEROSOL_SPECIES, molecular weights,
+│                     plot colours/cmaps
 ├── standards.txt     Default VMR / aerosol properties for all species
 ├── instruments.json  Bundled ILS parameters (Midac, IASI)
-└── filters/          Imager filter response CSVs (ASTER, MMT-gasCam, ...)
+└── filters/          Imager filter response CSVs (ASTER, MMT-gasCam,
+                      GOES-ABI, HIMAWARI-AHI, MODIS, MSG-SEVIRI, ...)
 ```
 
 ---

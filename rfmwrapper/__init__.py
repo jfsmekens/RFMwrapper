@@ -5,7 +5,7 @@ Dudhia, A (2017): The Reference Forward Model (RFM), JQSRT 186, pp. 243-253.
 doi:10.1016/j.jqsrt.2016.06.018
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .objects import (
     RFM,
@@ -17,6 +17,7 @@ from .objects import (
     runBatch,
     __RFMDIR__,
     __EXECPATH__,
+    __XSCPATH__,
     __HITRANPATH__,
     __ATMPATH__,
     __ARIAPATH__,
@@ -34,7 +35,9 @@ from .functions import (
     adjustAtm,
     insertPlume,
     sliceAtm,
-    readStandard,
+
+    readXSCHeaders,
+    concatXSC,
     # Planck / radiometric
     rad,
     bbt,
@@ -45,6 +48,8 @@ from .functions import (
     # Filter convolution
     filterConvolve,
     listSensors,
+    listPlatforms,
+    readRTTOVsrf,
     # Unit conversions
     ppm2scd,
     scd2ppm,
@@ -67,12 +72,31 @@ from .functions import (
     f2k,
     # Spectral resampling
     resampleSpectra,
+    # Ray-path diagnostics
+    parseRayPath,
     # Plotting
     plotGrid,
 )
 
-from . import constants
-from .constants import plot_cmaps, plot_colors, pretty_names
+from . import constants, plotting
+from .constants import plot_cmaps, plot_colors, pretty_names, AEROSOL_SPECIES
+from .plotting import (
+    applyStyle,
+    plotSpectra,
+    plotSpectraGrid,
+    plotFilterBands,
+    plotILSKernel,
+    plotAtmProfile,
+    plotAtmGrid,
+    plotLimbMap,
+    plotJacobians,
+    plotRetrievalProfile,
+    plotRayGeometry,
+    plotRayPath,
+    get_species_color,
+    get_species_cmap,
+    STYLE,
+)
 from .config import (get_rfm_dir, get_hitran_path,
                      get_exec_path, get_atm_dir, get_aria_dir,
                      write_config, _CONFIG_FILE)
@@ -89,21 +113,27 @@ __all__ = [
     'loadILSParams',
     'runBatch',
     # Path globals
-    '__RFMDIR__', '__EXECPATH__', '__HITRANPATH__',
+    '__RFMDIR__', '__EXECPATH__', '__HITRANPATH__', '__XSCPATH__',
     '__ATMPATH__', '__ARIAPATH__',
     'std_atmospheres',
     # Functions
-    'readAtm', 'writeAtm', 'adjustAtm', 'insertPlume', 'sliceAtm', 'readStandard',
+    'readAtm', 'writeAtm', 'adjustAtm', 'insertPlume', 'sliceAtm',
+    'readXSCHeaders', 'concatXSC',
     'rad', 'bbt', 'wn2wl', 'wl2wn',
-    'writeRFMspc', 'filterConvolve', 'listSensors',
+    'writeRFMspc', 'filterConvolve', 'listSensors', 'listPlatforms', 'readRTTOVsrf',
     'ppm2scd', 'scd2ppm', 'ppmm2mcm', 'mcm2ppmm',
     'mcm2gm2', 'gm2mcm2', 'ppm2mm3', 'mm32ppm',
     'RH2ppm', 'ppm2RH', 'RH2mm3', 'mm32RH', 'RH2gm3', 'gm32RH', 'Psat',
     'c2k', 'k2c', 'f2c', 'c2f', 'f2k',
     'resampleSpectra',
     'plotGrid',
-    'constants',
-    'plot_cmaps', 'plot_colors', 'pretty_names',
+    'constants', 'plotting',
+    'plot_cmaps', 'plot_colors', 'pretty_names', 'AEROSOL_SPECIES',
+    # Plotting
+    'applyStyle', 'plotSpectra', 'plotSpectraGrid', 'plotFilterBands',
+    'plotILSKernel', 'plotAtmProfile', 'plotAtmGrid',
+    'plotLimbMap', 'plotJacobians', 'plotRetrievalProfile',
+    'get_species_color', 'get_species_cmap', 'STYLE',
     'get_rfm_dir', 'get_hitran_path',
     'get_exec_path', 'get_atm_dir', 'get_aria_dir',
     'write_config', '_CONFIG_FILE',

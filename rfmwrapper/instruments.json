@@ -3,6 +3,7 @@
         "max_opd": 1.7,
         "fov": 0.030,
         "apod_type": "NB medium",
+        "spacing": 0.5,
         "description": "Midac M2401 open-path FTIR"
     },
     "IASI": {
@@ -10,6 +11,7 @@
         "fov": 0.01465,
         "apod_type": "Gaussian",
         "fwhm_wn": 0.5,
+        "spacing": 0.25,
         "description": "IASI on MetOp (L1C, Gaussian apodization, 0.5 cm⁻¹ FWHM). FOV = 14.65 mrad (12 km at 819 km altitude)."
     }
 }

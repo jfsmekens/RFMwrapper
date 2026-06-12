@@ -1,0 +1,25 @@
+# Claude Code session data
+.claude/
+memory/
+
+# Python
+__pycache__/
+*.py[cod]
+**/*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# macOS
+.DS_Store
+
+# Test / debug outputs
+test/demo_output/
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.vscode/

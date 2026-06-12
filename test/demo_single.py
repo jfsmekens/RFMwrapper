@@ -14,6 +14,27 @@ import matplotlib.pyplot as plt
 
 import rfmwrapper as rw
 
+# ---------------------------------------------------------------------------
+# Global rcParams — match the demo script figure style
+# ---------------------------------------------------------------------------
+plt.rcParams.update({
+    'font.size':                   11,
+    'axes.labelsize':              9,
+    'axes.titlesize':              12,
+    'xtick.labelsize':             9,
+    'xtick.direction':             'in',
+    'ytick.labelsize':             9,
+    'ytick.direction':             'in',
+    'lines.linewidth':             0.9,
+    'axes.grid':                   True,
+    'grid.linewidth':              0.5,
+    'grid.alpha':                  0.5,
+    'grid.linestyle':              '--',
+    'axes.axisbelow':              True,
+    'figure.constrained_layout.use': True,
+    'axes.formatter.limits':       (-4, 4),
+    'errorbar.capsize':             2,
+})
 
 # ---------------------------------------------------------------------------
 # Configuration

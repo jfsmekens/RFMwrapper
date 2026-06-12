@@ -4,6 +4,7 @@ Written by @jfsmekens - Last updated 15/02/2024
 Utility functions for the RFM wrapper: atmosphere I/O, Planck / unit conversions,
 filter convolution, and plotting helpers.
 """
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +13,10 @@ from glob import glob
 from scipy.interpolate import CubicSpline
 import pandas as pd
 
-from .constants import weights
+from .constants import weights, AEROSOL_SPECIES
+from .config import get_xsc_dir
+
+logger = logging.getLogger(__name__)
 
 # Path to bundled data file — works regardless of working directory
 _PACKAGE_DIR = Path(__file__).parent
@@ -134,6 +138,12 @@ def adjustAtm(atm: dict, gas: str, value: float) -> dict:
     dict
         New atmosphere dictionary with the adjusted gas profile.
     """
+    if gas.upper() in AEROSOL_SPECIES:
+        logger.info(
+            "adjustAtm: '%s' is an aerosol species — profile values are "
+            "dimensionless scaling factors (1.0 = reference extinction), not VMR [ppmv].",
+            gas
+        )
     atm = dict(atm)
     if gas not in atm:
         atm[gas] = np.ones(len(atm['HGT'])) * value
@@ -148,9 +158,6 @@ def insertPlume(atm: dict, h: float, th: float, plume: dict = None,
     """
     Insert a gas plume layer into an atmosphere dictionary.
 
-    Species absent from ``atm`` are seeded with their standard background VMR
-    before the plume enhancement is applied.
-
     Parameters
     ----------
     atm : dict
@@ -160,12 +167,22 @@ def insertPlume(atm: dict, h: float, th: float, plume: dict = None,
     th : float
         Vertical thickness of the plume [km].
     plume : dict, optional
-        Additive VMR enhancements keyed by gas name [ppmv]. Default is ``{}``.
+        Gas concentrations within the plume, keyed by species name.
+
+        * For species **already present** in ``atm``: values are additive
+          enhancements [ppmv] above the existing background profile.
+        * For species **absent** from ``atm``: values are the **peak total
+          concentration** [ppmv] in the plume (background is implicitly zero).
+          To use a non-zero background for an absent species, add it first
+          with :func:`adjustAtm` before calling this function.
+
+        Aerosol species (see :data:`AEROSOL_SPECIES`) follow the same
+        convention but values are dimensionless scaling factors, not ppmv.
     gradient_flag : int
         Concentration profile shape within the plume layer:
 
         * 0 — uniform (step function)
-        * 1 — triangular (default)
+        * 1 — triangular, peak at centre (default)
         * 2 — Gaussian
 
     Returns
@@ -176,14 +193,26 @@ def insertPlume(atm: dict, h: float, th: float, plume: dict = None,
     if plume is None:
         plume = {}
 
+    for key in plume:
+        if key.upper() in AEROSOL_SPECIES:
+            logger.info(
+                "insertPlume: '%s' is an aerosol species — plume values are "
+                "dimensionless scaling factor enhancements (additive on top of "
+                "the background scaling), not VMR [ppmv].",
+                key
+            )
+
     h1 = h - th / 2
     h2 = h + th / 2
 
     atm = dict(atm)
-    std = readStandard()
     for key in plume:
         if key not in atm:
-            atm[key] = np.ones(len(atm['HGT'])) * std[key]['vmr']
+            # Species absent from the background ATM — seed with 0 ppmv so the
+            # plume enhancement is added on top of a clean background.
+            # Pass a pre-seeded ATM profile (via adjustAtm) if a non-zero
+            # background is required.
+            atm[key] = np.zeros(len(atm['HGT']))
 
     if gradient_flag == 0:
         xx = np.asarray([h1 - 0.001, h1, h2, h2 + 0.001])
@@ -371,64 +400,6 @@ def wl2wn(wl: np.ndarray, L2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 # ===========================================================================
-# ========================= Standards file ==================================
-# ===========================================================================
-
-def readStandard() -> dict:
-    """
-    Read default VMR and aerosol properties from the bundled ``standards.txt``.
-
-    Returns
-    -------
-    dict
-        Keyed by species name; each value is a dict of property name → value.
-    """
-    with open(_PACKAGE_DIR / 'standards.txt') as f:
-        lines = f.readlines()
-
-    line = [l for l in lines if l.startswith('*')][0]
-    keys = [k.strip() for k in line.strip('*').split('#')[0].split(':')]
-
-    lines = [l for l in lines if not l.startswith('\n')]
-    lines = [l for l in lines if not l.startswith('*')]
-    lines = [l for l in lines if not l.startswith('#')]
-
-    std = {}
-    for line in lines:
-        line = line.split('#')[0].split('(')[0]
-        values = line.split(':')
-        for i, v in enumerate(values):
-            v = v.strip()
-            if v == 'None':
-                v = None
-            elif v == '':
-                v = None
-            elif v == 'True':
-                v = True
-            elif v == 'False':
-                v = False
-            elif len(v.split(',')) > 1:
-                try:
-                    v = [float(x) for x in v.split(',')]
-                except ValueError:
-                    v = [x.strip() for x in v.split(',')]
-            else:
-                try:
-                    v = float(v)
-                except ValueError:
-                    pass
-            values[i] = v
-        for i, key in enumerate(keys):
-            if i == 0:
-                name = values[i]
-                std[name] = {}
-            else:
-                std[name][key] = values[i]
-
-    return std
-
-
-# ===========================================================================
 # ========================= Unit conversions =================================
 # ===========================================================================
 
@@ -466,7 +437,7 @@ def ppm2scd(ppm: float, pathlength, temp: float = 298, pres: float = 1013,
     n_tot = pres / R / temp
     n_gas = ppm * 1e-6 * n_tot
     if isinstance(pathlength, (list, np.ndarray)):
-        scd = np.trapz(n_gas, x=np.asarray(pathlength) * 1e3) / np.sin(np.deg2rad(elev))
+        scd = np.trapezoid(n_gas, x=np.asarray(pathlength) * 1e3) / np.sin(np.deg2rad(elev))
     else:
         scd = n_gas * pathlength * 1e3
     if output == 'molec/cm2':
@@ -683,6 +654,229 @@ def writeRFMspc(wn: np.ndarray, spc: np.ndarray, outname: str,
 
 
 # ===========================================================================
+# ========================= XSC file utilities ==============================
+# ===========================================================================
+
+def _parseXSCHeader(line: str) -> dict:
+    """
+    Parse one HITRAN XSC header line into a dict.
+
+    HITRAN XSC fixed-width format (1-based columns):
+      1–20   molecule name
+     21–30   WN_start [cm⁻¹]
+     31–40   WN_end   [cm⁻¹]
+     41–47   NPTS
+     48–54   T [K]
+     55–60   p [Torr]
+     61+     max_k, resolution, broadener, reference (not parsed here)
+    """
+    return {
+        'name':    line[0:20].strip(),
+        'wn_start': float(line[20:30]),
+        'wn_end':   float(line[30:40]),
+        'npts':     int(line[40:47]),
+        'T':        float(line[47:54]),
+        'p_torr':   float(line[54:60]),
+        'p_mbar':   float(line[54:60]) * 1.33322,   # Torr → mbar
+        'spacing':  (float(line[30:40]) - float(line[20:30])) / (int(line[40:47]) - 1),
+    }
+
+
+def readXSCHeaders(files: list) -> 'pd.DataFrame':
+    """
+    Read the header line from each XSC file and return a summary table.
+
+    Useful for inspecting a dataset before concatenating — shows the (T, p)
+    grid, spectral range, and spectral spacing of every tabulation block.
+
+    Parameters
+    ----------
+    files : list of str or Path
+        XSC file paths.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per file with columns: ``file``, ``name``, ``wn_start``,
+        ``wn_end``, ``npts``, ``T``, ``p_torr``, ``p_mbar``, ``spacing``.
+    """
+    rows = []
+    for fpath in sorted(files):
+        with open(fpath, 'r') as f:
+            hdr = f.readline()
+        rec = _parseXSCHeader(hdr)
+        rec['file'] = str(fpath)
+        rows.append(rec)
+    return pd.DataFrame(rows).sort_values(['T', 'p_torr']).reset_index(drop=True)
+
+
+def concatXSC(files: list, output: str = None,
+              T_range: tuple = None,
+              p_range: tuple = None,
+              verbose: bool = True) -> 'pd.DataFrame':
+    """
+    Concatenate HITRAN XSC tabulation files into a single RFM-ready file.
+
+    RFM requires one file per molecule containing all (T, p) tabulations
+    concatenated end-to-end.  Each tabulation is one header line followed by
+    cross-section data lines; concatenation is the literal joining of all
+    selected files.
+
+    The output is written to the package XSC directory (``__XSCPATH__``,
+    i.e. ``$RFM_DIR/xsc/``) by default, keeping all cross-section files in
+    one place alongside the HITRAN and atmosphere files.  The directory is
+    created if it does not already exist.
+
+    Parameters
+    ----------
+    files : list of str or Path
+        XSC file paths to include.  Pass ``sorted(glob.glob('*.xsc'))`` or
+        similar.  The output file is automatically excluded if it appears in
+        this list (safe to glob the XSC directory itself on subsequent calls).
+    output : str, optional
+        Destination file path.  Defaults to
+        ``$RFM_DIR/xsc/{molecule_name}.xsc`` where ``molecule_name`` is the
+        lowercase species name read from the first input file header (e.g.
+        ``sf6.xsc``).
+    T_range : tuple of (float, float), optional
+        ``(T_min, T_max)`` in K.  Tabulations outside this range are excluded.
+    p_range : tuple of (float, float), optional
+        ``(p_min, p_max)`` in **mbar**.  Tabulations outside this range are
+        excluded.  Note that HITRAN stores pressure in Torr; the conversion
+        (1 Torr = 1.33322 mbar) is applied internally.
+    verbose : bool
+        If True (default), print a summary table of included tabulations and
+        warn about any inconsistencies.
+
+    Returns
+    -------
+    pd.DataFrame
+        Summary table of the included tabulations (same as
+        :func:`readXSCHeaders` output).
+
+    Raises
+    ------
+    ValueError
+        If no files remain after filtering, or if the selected files span
+        more than one spectral range (which would confuse RFM's interpolation).
+
+    Notes
+    -----
+    **Spectral grid consistency**: files from the same measurement campaign
+    typically share the same WN_start/WN_end but differ in NPTS (the spectral
+    resolution varies with pressure — lower pressure → narrower lines →
+    finer grid needed).  This is normal and RFM handles it correctly.
+
+    **Mixing spectral ranges**: including files with different WN extents
+    (e.g. 925–955 cm⁻¹ alongside 780–1100 cm⁻¹) will trigger a warning.
+    RFM can technically handle this, but the (T, p) triangulation will be
+    inconsistent across wavenumber — some (T, p) nodes will only exist for
+    part of the spectral range.  Prefer a single consistent dataset.
+    """
+    # ---- Parse all headers (output path not known yet — skip after resolving) ----
+    rows = []
+    for fpath in sorted(str(f) for f in files):
+        with open(fpath, 'r') as f:
+            hdr = f.readline()
+        rec = _parseXSCHeader(hdr)
+        rec['file'] = fpath
+        rows.append(rec)
+
+    if not rows:
+        raise ValueError("No XSC files provided.")
+
+    # ---- Resolve output path ----
+    if output is None:
+        mol_name = rows[0]['name'].lower()
+        xsc_dir = Path(get_xsc_dir())
+        xsc_dir.mkdir(parents=True, exist_ok=True)
+        output = str(xsc_dir / f'{mol_name}.xsc')
+
+    output_abs = str(Path(output).resolve())
+
+    # ---- Drop the output file if it appeared in the input list ----
+    n_before = len(rows)
+    rows = [r for r in rows if str(Path(r['file']).resolve()) != output_abs]
+    if len(rows) < n_before:
+        logger.warning("concatXSC: skipping output file found in input list: %s", output)
+
+    df = pd.DataFrame(rows).sort_values(['T', 'p_torr']).reset_index(drop=True)
+
+    # ---- Apply filters ----
+    if T_range is not None:
+        mask = (df['T'] >= T_range[0]) & (df['T'] <= T_range[1])
+        n_dropped = (~mask).sum()
+        df = df[mask].reset_index(drop=True)
+        if verbose and n_dropped:
+            logger.info("concatXSC: dropped %d tabulation(s) outside T_range %s K",
+                        n_dropped, T_range)
+
+    if p_range is not None:
+        mask = (df['p_mbar'] >= p_range[0]) & (df['p_mbar'] <= p_range[1])
+        n_dropped = (~mask).sum()
+        df = df[mask].reset_index(drop=True)
+        if verbose and n_dropped:
+            logger.info("concatXSC: dropped %d tabulation(s) outside p_range %s mbar",
+                        n_dropped, p_range)
+
+    if df.empty:
+        raise ValueError("No XSC tabulations remain after filtering.")
+
+    # ---- Warn about mixed spectral ranges ----
+    wn_combos = df[['wn_start', 'wn_end']].drop_duplicates()
+    if len(wn_combos) > 1:
+        import logging as _logging
+        logger.warning(
+            "concatXSC: files span %d different spectral ranges:\n%s\n"
+            "RFM can read this but the (T,p) triangulation will be "
+            "inconsistent across wavenumber. Consider using a single "
+            "spectral dataset.",
+            len(wn_combos),
+            wn_combos.to_string(index=False)
+        )
+
+    # ---- Warn about (T, p) duplicates in the source files ----
+    # Round to 0.5 K / 0.5 Torr to catch near-identical measurements
+    df['_T_r'] = (df['T'] / 0.5).round() * 0.5
+    df['_p_r'] = (df['p_torr'] / 0.5).round() * 0.5
+    dups = df[df.duplicated(subset=['_T_r', '_p_r'], keep=False)]
+    if not dups.empty:
+        logger.warning(
+            "concatXSC: %d tabulation(s) share nearly identical (T, p) values "
+            "— keeping all, but RFM may behave unexpectedly:\n%s",
+            len(dups),
+            dups[['file', 'T', 'p_torr']].to_string(index=False)
+        )
+    df = df.drop(columns=['_T_r', '_p_r'])
+
+    # ---- Print summary ----
+    if verbose:
+        print(f"concatXSC: including {len(df)} tabulation(s) → {output}")
+        print(df[['T', 'p_torr', 'p_mbar', 'wn_start', 'wn_end', 'npts', 'spacing']]
+              .rename(columns={'p_torr': 'p[Torr]', 'p_mbar': 'p[mbar]',
+                               'wn_start': 'WN1', 'wn_end': 'WN2',
+                               'spacing': 'Δν[cm⁻¹]'})
+              .to_string(index=False))
+        print()
+
+    # ---- Write concatenated file (create parent dir if needed) ----
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    with open(output, 'w') as out:
+        for fpath in df['file']:
+            with open(fpath, 'r') as inp:
+                out.write(inp.read())
+            # Ensure a newline between blocks (some files may omit trailing newline)
+            out.write('\n')
+
+    if verbose:
+        import os as _os
+        size_mb = _os.path.getsize(output) / 1e6
+        print(f"✓ Written: {output}  ({size_mb:.1f} MB, {len(df)} blocks)")
+
+    return df
+
+
+# ===========================================================================
 # ========================= Filter convolution ==============================
 # ===========================================================================
 
@@ -691,32 +885,142 @@ _FILTERS_DIR = _PACKAGE_DIR / 'filters'
 
 def listSensors() -> list[str]:
     """
-    List the bundled filter sensor names available for :func:`filterConvolve`.
+    List all available filter sensor/platform paths for :func:`filterConvolve`.
+
+    For single-platform instruments (e.g. ``'ASTER'``) the name is the folder
+    itself.  For multi-platform instruments the name includes the platform
+    subfolder (e.g. ``'GOES-ABI/GOES-16'``).
 
     Returns
     -------
     list of str
-        Names of sensor folders found in the package ``filters/`` directory.
+        Relative paths from the package ``filters/`` directory to every leaf
+        folder that contains at least one CSV file.
     """
-    return sorted(p.name for p in _FILTERS_DIR.iterdir() if p.is_dir())
+    return sorted({
+        str(p.parent.relative_to(_FILTERS_DIR))
+        for p in _FILTERS_DIR.rglob('*.csv')
+    })
 
 
-def _loadFilters(sensor: str) -> dict:
+def listPlatforms(instrument: str) -> list[str]:
     """
-    Load all filter CSVs for a named sensor from the bundled filters directory.
-
-    Each CSV must have ``wl`` [µm] and ``T`` [0–1] columns.  The filename
-    stem (without ``.csv``) is used as the band name.
+    List available platform variants for a multi-platform instrument.
 
     Parameters
     ----------
-    sensor : str
-        Sensor folder name (e.g. ``'ASTER'``, ``'MMT-gasCam'``).
+    instrument : str
+        Instrument folder name (e.g. ``'GOES-ABI'``, ``'MSG-SEVIRI'``).
+
+    Returns
+    -------
+    list of str
+        Platform sub-folder names, sorted alphabetically.
+
+    Raises
+    ------
+    ValueError
+        If ``instrument`` is not found or has no platform sub-directories
+        (i.e. it is a single-platform instrument — use :func:`listSensors`
+        directly in that case).
+    """
+    inst_dir = _FILTERS_DIR / instrument
+    if not inst_dir.is_dir():
+        raise ValueError(
+            f"Unknown instrument {instrument!r}. Use listSensors() to see all available."
+        )
+    platforms = sorted(d.name for d in inst_dir.iterdir() if d.is_dir())
+    if not platforms:
+        raise ValueError(
+            f"{instrument!r} has no platform sub-directories. "
+            "Use listSensors() to reference it directly."
+        )
+    return platforms
+
+
+def readRTTOVsrf(filepath: str | Path) -> dict:
+    """
+    Parse a single RTTOV NWP-SAF spectral response function file.
+
+    The RTTOV ``.txt`` format consists of a 4-line header followed by two
+    columns of data:
+
+    .. code-block:: text
+
+        <channel_num>, <label> ; <source>
+        Number of data points:
+        <npts>
+        Wavenumber (cm-1)   Filter response
+        <wn_1>   <T_1>
+        ...
+
+    Parameters
+    ----------
+    filepath : str or Path
+        Path to the RTTOV ``.txt`` SRF file.
 
     Returns
     -------
     dict
-        Mapping band name → ``{'wl': np.ndarray, 'T': np.ndarray}``.
+        Keys:
+
+        * ``'wn'``    — wavenumber axis [cm⁻¹], ascending, shape ``(npts,)``
+        * ``'wl'``    — wavelength axis [µm], derived as ``10000 / wn``, shape ``(npts,)``
+        * ``'T'``     — filter response [0–1], shape ``(npts,)``
+        * ``'label'`` — band label string extracted from header line 1
+        * ``'npts'``  — number of data points declared in the header
+    """
+    filepath = Path(filepath)
+    with open(filepath) as f:
+        line1 = f.readline()
+        f.readline()               # "Number of data points:"
+        npts  = int(f.readline())
+        f.readline()               # "Wavenumber (cm-1)   Filter response"
+        data  = np.loadtxt(f)
+
+    # Extract band label: everything between the first comma and the semicolon
+    # (or end of line if no semicolon).
+    after_comma = line1.split(',', 1)[1] if ',' in line1 else line1
+    label = after_comma.split(';')[0].strip()
+
+    wn = data[:, 0]
+    T  = data[:, 1]
+
+    # Ensure ascending wavenumber order (some source files are descending)
+    if len(wn) > 1 and wn[0] > wn[-1]:
+        wn = wn[::-1]
+        T  = T[::-1]
+
+    return {
+        'label': label,
+        'wn':    wn,
+        'wl':    1e4 / wn,
+        'T':     T,
+        'npts':  npts,
+    }
+
+
+def _loadFilters(sensor: str) -> dict:
+    """
+    Load all filter CSVs for a named sensor/platform from the bundled directory.
+
+    Each CSV must have a ``wn`` [cm⁻¹] column and a ``T`` [0–1] column.  A
+    ``wl`` [µm] column is optional — if absent it is derived as ``10000/wn``.
+    The filename stem (without ``.csv``) is used as the band name.
+
+    The ``sensor`` string may include a platform sub-path
+    (e.g. ``'GOES-ABI/GOES-16'`` or simply ``'ASTER'``).
+
+    Parameters
+    ----------
+    sensor : str
+        Sensor path relative to the package ``filters/`` directory.
+
+    Returns
+    -------
+    dict
+        Mapping band name → ``{'wn': ndarray, 'wl': ndarray, 'T': ndarray}``,
+        with both axes sorted ascending by wavenumber.
     """
     sensor_dir = _FILTERS_DIR / sensor
     if not sensor_dir.is_dir():
@@ -725,9 +1029,15 @@ def _loadFilters(sensor: str) -> dict:
     filters = {}
     for csv in sorted(sensor_dir.glob('*.csv')):
         df = pd.read_csv(csv, comment='#')
+        wn = df['wn'].values.astype(float)
+        wl = df['wl'].values.astype(float) if 'wl' in df.columns else 1e4 / wn
+        T  = df['T'].values.astype(float)
+        # Guarantee ascending wavenumber order for np.interp
+        order = np.argsort(wn)
         filters[csv.stem] = {
-            'wl': df['wl'].values,
-            'T':  df['T'].values,
+            'wn': wn[order],
+            'wl': wl[order],
+            'T':  T[order],
         }
     if not filters:
         raise ValueError(f"No CSV files found in filter directory: {sensor_dir}")
@@ -739,56 +1049,70 @@ def filterConvolve(x: np.ndarray, y: np.ndarray,
     """
     Convolve a spectrum with imager filter response functions.
 
+    Convolution is performed in wavenumber space: ``x`` must be a wavenumber
+    axis [cm⁻¹].  No Jacobian correction is applied — the output value is the
+    transmission-weighted average (or integral) of ``y`` in wavenumber space,
+    which is the physically correct radiometric integral.
+
     Parameters
     ----------
     x : array_like
-        Wavelength axis [µm].
+        Wavenumber axis [cm⁻¹], monotonically increasing.
     y : array_like
-        Spectral values.
+        Spectral values aligned with ``x``.
     sensor : str or dict
-        Name of a bundled sensor (e.g. ``'ASTER'``, ``'MMT-gasCam'``) or a
-        dict mapping band name → ``{'wl': np.ndarray, 'T': np.ndarray}``.
+        Name of a bundled sensor (e.g. ``'ASTER'``, ``'GOES-ABI/GOES-16'``) or
+        a dict mapping band name → ``{'wn': ndarray, 'T': ndarray}``.
         Use :func:`listSensors` to see available built-in sensors.
     method : str
-        ``'avg'`` for transmission-weighted average,
-        ``'integ'`` for trapezoid integration over the passband.
+        ``'avg'`` — transmission-weighted average (default).
+        ``'integ'`` — trapezoid integral over the passband.
 
     Returns
     -------
     dict
         Per-band results keyed by band name, each containing:
 
+        * ``'center_wn'`` — band centre wavenumber [cm⁻¹]
         * ``'center_wl'`` — band centre wavelength [µm]
         * ``'value'``     — convolved spectral value
-        * ``'T'``         — transmission interpolated onto ``x``
+        * ``'T'``         — filter transmission interpolated onto ``x``
         * ``'through'``   — ``y * T``
 
-        Plus summary arrays ``'wl'`` and ``'spec'`` (one entry per band).
+        Plus summary arrays ``'wn'``, ``'wl'``, ``'spec'`` (one entry per band)
+        and ``'filters'`` (the raw filter dict).
     """
     filters = _loadFilters(sensor) if isinstance(sensor, str) else sensor
 
     out = {}
-    wl_centers, spec_values = [], []
+    wn_centers, wl_centers, spec_values = [], [], []
 
     for name, filt in filters.items():
-        wl_f, T_f = filt['wl'], filt['T']
-        T = np.interp(x, wl_f, T_f, left=0.0, right=0.0)
-        center = float(np.median(wl_f[T_f > 0.01])) if np.any(T_f > 0.01) else float(np.mean(wl_f))
+        wn_f, T_f = filt['wn'], filt['T']
+        T = np.interp(x, wn_f, T_f, left=0.0, right=0.0)
+        passband = wn_f[T_f > 0.01]
+        center_wn = float(np.median(passband)) if len(passband) else float(np.mean(wn_f))
+        center_wl = float(1e4 / center_wn)
 
         if method == 'avg':
             value = float(np.average(y, weights=T)) if T.sum() > 0 else np.nan
         elif method == 'integ':
             mask = T > 0
-            value = float(np.trapz(y[mask] * T[mask], x[mask])) if mask.any() else np.nan
+            value = float(np.trapezoid(y[mask] * T[mask], x[mask])) if mask.any() else np.nan
         else:
             raise ValueError(f"method must be 'avg' or 'integ', got {method!r}")
 
-        out[name] = {'center_wl': center, 'value': value, 'T': T, 'through': y * T}
-        wl_centers.append(center)
+        out[name] = {
+            'center_wn': center_wn, 'center_wl': center_wl,
+            'value': value, 'T': T, 'through': y * T,
+        }
+        wn_centers.append(center_wn)
+        wl_centers.append(center_wl)
         spec_values.append(value)
 
-    out['wl']     = np.array(wl_centers)
-    out['spec']   = np.array(spec_values)
+    out['wn']      = np.array(wn_centers)
+    out['wl']      = np.array(wl_centers)
+    out['spec']    = np.array(spec_values)
     out['filters'] = filters
     return out
 
@@ -829,7 +1153,9 @@ def loadILSParams(instrument: str) -> dict:
     -------
     dict
         Keys: ``'max_opd'`` [cm], ``'fov'`` [rad], ``'apod_type'`` [str],
-        ``'description'`` [str].
+        ``'description'`` [str].  Instruments that define a native output
+        grid also include ``'spacing'`` [cm⁻¹]; pass ``resample=True`` to
+        :func:`applyILS` to resample the convolved spectrum to this grid.
 
     Raises
     ------
@@ -1149,6 +1475,247 @@ def resampleSpectra(spectra, dx: float = None,
         raise TypeError(
             f"resampleSpectra expects a Spectra or ILSOut, got {type(spectra).__name__!r}."
         )
+
+
+# ===========================================================================
+# ====================== Ray-path diagnostics ================================
+# ===========================================================================
+
+def parseRayPath(lines: list[str]) -> dict:
+    """
+    Parse the raw text lines of one RFM ``pth*.out`` file into structured data.
+
+    Each ``pth*.out`` file holds the ray-path diagnostic for one elevation angle
+    (nadir/zenith) or one tangent height (limb).
+
+    **Limb geometry**: ``Len`` and ``Amt`` are true slant quantities — RFM
+    traces the curved ray and reports the actual slant path per layer.
+
+    **Nadir/zenith geometry (RFM < v5.21)**: RFM reports the *vertical* layer
+    thickness and vertical column amount (``Zen = 0`` for every layer).  This
+    function applies the ``1 / cos(VZA)`` slant-path correction automatically
+    so that ``len`` and ``amt`` are always slant quantities.  The correction
+    factor is stored in ``header['slant_factor']`` for transparency.
+
+    **Nadir/zenith geometry (RFM v5.21+)**: RFM applies the ``SECFAC =
+    1 / cos(VZA)`` correction internally in ``pthwrt_sub.f90`` (Bug#35 fix)
+    before writing the file.  ``Len``, ``Amt``, and the ``Zen`` column already
+    carry slant quantities; no further correction is applied here.
+
+    **GRA flag — 2D atmosphere (NSeg2 > 0)**: When RFM is run with the GRA
+    flag, the ray traverses two different horizontal columns on the downward
+    (observer→tangent) and upward (tangent→observer) legs.  The PTH file
+    contains two data blocks per gas, each followed by its own ``Total:`` line.
+    The returned dict includes the additional keys ``'gases_up'`` and
+    ``'totals_up'`` for the upward segment.  The primary ``'gases'`` and
+    ``'totals'`` keys always carry the downward (first) segment, ensuring
+    backward compatibility with non-GRA code.  The ``Zen`` column is named
+    ``Psi`` in the raw file for GRA mode (horizontal angle in 2D atmosphere)
+    but is mapped to the same ``zen`` column in the DataFrame.
+
+    Parameters
+    ----------
+    lines : list of str
+        Raw text lines as returned by :meth:`RFM.getRayPath`.
+
+    Returns
+    -------
+    dict with keys:
+
+    ``'header'`` : dict
+        Scalar geometry info extracted from the file header:
+
+        - ``'geometry'``    : ``'limb'`` or ``'nadir'`` (str)
+        - ``'tan_hgt'``     : tangent/refracted height [km] (float or None)
+        - ``'ele_ang'``     : elevation angle [deg] (float or None)
+        - ``'rfm_version'`` : version string from header, e.g. ``'5.21_18DEC'``
+          (str or None)
+        - ``'slant_factor'``: ``1/cos(VZA)`` factor — applied by this parser
+          (RFM < v5.21) or recorded from RFM output (v5.21+). Always 1.0 for
+          limb and GRA (no SECFAC in those modes).
+        - ``'one_way'``     : bool — for standard limb with ``NSeg2 = 0``,
+          ``True`` means only the observer→tangent half is stored; full limb
+          column = ``2 × totals[gas]['amt']``.
+        - ``'gra'``         : bool — ``True`` when ``NSeg2 > 0`` (GRA flag
+          active, 2D atmosphere).
+        - ``'n_gas'``       : number of gases (int)
+        - ``'n_seg'``       : NSeg1, number of downward segments (int)
+        - ``'n_seg2'``      : NSeg2 (int); 0 unless GRA flag active
+
+    ``'gases'`` : dict of str → :class:`pandas.DataFrame`
+        Downward-segment (or only segment for non-GRA) data per gas.
+        Columns: ``lev`` (int), ``z_low`` (float, km), ``zen`` (float, deg),
+        ``temp`` (float, K), ``press`` (float, mb), ``vmr`` (float, ppv),
+        ``amt`` (float, slant kmol cm⁻²), ``len`` (float, slant km).
+        ``temp`` and ``press`` are Curtis-Godson weighted means.
+
+    ``'totals'`` : dict of str → dict
+        Downward-segment totals: ``{'amt': float, 'len': float}``.
+        For standard limb with ``one_way=True``, multiply by 2 for the full
+        round-trip optical path.
+
+    ``'gases_up'`` : dict of str → :class:`pandas.DataFrame`
+        Upward-segment data per gas.  **Present only when** ``header['gra']``
+        is ``True``; absent otherwise.
+
+    ``'totals_up'`` : dict of str → dict
+        Upward-segment totals.  **Present only when** ``header['gra']`` is
+        ``True``; absent otherwise.
+    """
+    import math
+    import pandas as pd
+    import re
+
+    header = {
+        'geometry':    None,
+        'tan_hgt':     None,
+        'ele_ang':     None,
+        'rfm_version': None,
+        'slant_factor': 1.0,
+        'one_way':     False,
+        'gra':         False,
+        'n_gas':       None,
+        'n_seg':       None,
+        'n_seg2':      None,
+    }
+
+    # ---- parse file header -------------------------------------------------
+    for line in lines[:10]:
+        s = line.strip()
+        if 'Limb-viewing' in s:
+            header['geometry'] = 'limb'
+        elif ('Downward-looking' in s or 'Upward-looking' in s
+              or 'Nadir' in s or 'Zenith' in s):
+            header['geometry'] = 'nadir'
+        m = re.search(r'by RFM v\.([\w.]+)', s)
+        if m:
+            header['rfm_version'] = m.group(1)
+        m = re.search(r'Tan\s+Hgt\s*=\s*([\d.]+)', s)
+        if m:
+            header['tan_hgt'] = float(m.group(1))
+            header['geometry'] = 'limb'
+        m = re.search(r'Ele\.Ang\s*=\s*([-\d.]+)', s)
+        if m:
+            header['ele_ang'] = float(m.group(1))
+        m = re.match(r'\s*(\d+)\s+(\d+)\s+(\d+)\s*=\s*NGas', s)
+        if m:
+            header['n_gas']  = int(m.group(1))
+            header['n_seg']  = int(m.group(2))
+            header['n_seg2'] = int(m.group(3))
+            n_seg2 = int(m.group(3))
+            if n_seg2 > 0:
+                header['gra'] = True
+            elif header['geometry'] == 'limb':
+                header['one_way'] = True
+
+    # Determine whether slant correction has already been applied by RFM.
+    # Bug#35 (v5.21) introduced SECFAC in pthwrt_sub for NAD/ZEN/HOM paths.
+    # GRA paths do not use SECFAC regardless of version.
+    rfm_ver = header['rfm_version']
+    try:
+        ver_num = float(rfm_ver.split('_')[0]) if rfm_ver else 0.0
+    except (ValueError, AttributeError):
+        ver_num = 0.0
+    rfm_applies_secfac = (ver_num >= 5.21) and not header['gra']
+
+    # ---- parse per-gas tables ----------------------------------------------
+    # For each gas track two row buffers (dn, up) and two total slots.
+    # Non-GRA files only ever fill the dn buffer.
+    data_cols = ['lev', 'z_low', 'zen', 'temp', 'press', 'vmr', 'amt', 'len']
+
+    # buf[gas] = [dn_rows, up_rows]
+    buf: dict[str, list[list]] = {}
+    # tot[gas] = [dn_total_or_None, up_total_or_None]
+    tot: dict[str, list] = {}
+
+    current_gas = None
+
+    for line in lines:
+        s = line.strip()
+        if not s or s.startswith('!'):
+            continue
+
+        # gas header: bare word on its own line
+        if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*\s*$', s):
+            current_gas = s.strip().upper()
+            if current_gas not in buf:
+                buf[current_gas] = [[], []]   # [dn_rows, up_rows]
+                tot[current_gas] = [None, None]
+            continue
+
+        # skip column-header line (Lev ... Zen[dg] or Psi[dg] ...)
+        if s.startswith('Lev'):
+            continue
+
+        # NGas/NSeg summary line — already parsed
+        if re.match(r'\s*\d+\s+\d+\s+\d+\s*=\s*NGas', s):
+            continue
+
+        # Total line — closes the current segment buffer for this gas
+        m = re.match(r'.*Total:\s+([\dE+\-\.]+)\s+([\dE+\-\.]+)', s)
+        if m and current_gas is not None:
+            entry = {'amt': float(m.group(1)), 'len': float(m.group(2))}
+            if tot[current_gas][0] is None:
+                tot[current_gas][0] = entry   # first Total → downward
+            else:
+                tot[current_gas][1] = entry   # second Total → upward
+            continue
+
+        # data row: starts with an integer level index
+        if current_gas is not None:
+            m = re.match(
+                r'\s*(\d+)\s+([\d.E+\-]+)\s+([\d.E+\-]+)\s+([\d.E+\-]+)'
+                r'\s+([\d.E+\-]+)\s+([\d.E+\-]+)\s+([\d.E+\-]+)\s+([\d.E+\-]+)',
+                s
+            )
+            if m:
+                row = [int(m.group(1))] + [float(m.group(i)) for i in range(2, 9)]
+                # Rows belong to the upward segment once the downward Total
+                # has been recorded.
+                seg = 1 if tot[current_gas][0] is not None else 0
+                buf[current_gas][seg].append(row)
+
+    def _to_df(rows: list) -> pd.DataFrame:
+        return pd.DataFrame(rows, columns=data_cols)
+
+    gases_dn = {g: _to_df(b[0]) for g, b in buf.items() if b[0]}
+    gases_up = {g: _to_df(b[1]) for g, b in buf.items() if b[1]}
+    totals_dn = {g: t[0] for g, t in tot.items() if t[0] is not None}
+    totals_up = {g: t[1] for g, t in tot.items() if t[1] is not None}
+
+    # For nadir/zenith, ensure len and amt are slant quantities.
+    # RFM < v5.21: file contains vertical values — apply 1/cos(VZA) here.
+    # RFM v5.21+:  SECFAC already applied inside pthwrt_sub.f90.
+    # GRA mode:    two distinct horizontal columns; no SECFAC in either version.
+    if header['geometry'] == 'nadir' and header['ele_ang'] is not None:
+        vza_rad = math.radians(90.0 + header['ele_ang'])
+        slant = 1.0 / math.cos(vza_rad)
+        header['slant_factor'] = slant
+        if not rfm_applies_secfac:
+            for df in gases_dn.values():
+                df['len'] = df['len'] * slant
+                df['amt'] = df['amt'] * slant
+            for g in totals_dn:
+                totals_dn[g]['len'] *= slant
+                totals_dn[g]['amt'] *= slant
+            # GRA upward segment (not expected for nadir, but guard anyway)
+            for df in gases_up.values():
+                df['len'] = df['len'] * slant
+                df['amt'] = df['amt'] * slant
+            for g in totals_up:
+                totals_up[g]['len'] *= slant
+                totals_up[g]['amt'] *= slant
+
+    result = {
+        'header':  header,
+        'gases':   gases_dn,
+        'totals':  totals_dn,
+    }
+    if header['gra']:
+        result['gases_up']  = gases_up
+        result['totals_up'] = totals_up
+
+    return result
 
 
 # ===========================================================================
