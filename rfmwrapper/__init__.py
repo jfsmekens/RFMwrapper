@@ -5,7 +5,7 @@ Dudhia, A (2017): The Reference Forward Model (RFM), JQSRT 186, pp. 243-253.
 doi:10.1016/j.jqsrt.2016.06.018
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from .objects import (
     RFM,
@@ -84,15 +84,21 @@ from .plotting import (
     applyStyle,
     plotSpectra,
     plotSpectraGrid,
+    plotSpectraSweep,
     plotFilterBands,
+    plotFilterSweep,
     plotILSKernel,
+    plotILS,
+    plotILSSweep,
     plotAtmProfile,
     plotAtmGrid,
     plotLimbMap,
     plotJacobians,
+    plotJacobianSweep,
     plotRetrievalProfile,
     plotRayGeometry,
     plotRayPath,
+    sweep_colors,
     get_species_color,
     get_species_cmap,
     STYLE,
@@ -130,10 +136,11 @@ __all__ = [
     'constants', 'plotting',
     'plot_cmaps', 'plot_colors', 'pretty_names', 'AEROSOL_SPECIES',
     # Plotting
-    'applyStyle', 'plotSpectra', 'plotSpectraGrid', 'plotFilterBands',
-    'plotILSKernel', 'plotAtmProfile', 'plotAtmGrid',
-    'plotLimbMap', 'plotJacobians', 'plotRetrievalProfile',
-    'get_species_color', 'get_species_cmap', 'STYLE',
+    'applyStyle', 'plotSpectra', 'plotSpectraGrid', 'plotSpectraSweep',
+    'plotFilterBands', 'plotFilterSweep',
+    'plotILSKernel', 'plotILS', 'plotILSSweep', 'plotAtmProfile', 'plotAtmGrid',
+    'plotLimbMap', 'plotJacobians', 'plotJacobianSweep', 'plotRetrievalProfile',
+    'sweep_colors', 'get_species_color', 'get_species_cmap', 'STYLE',
     'get_rfm_dir', 'get_hitran_path',
     'get_exec_path', 'get_atm_dir', 'get_aria_dir',
     'write_config', '_CONFIG_FILE',

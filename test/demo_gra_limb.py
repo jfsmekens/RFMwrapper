@@ -1,5 +1,5 @@
 """
-test_gra_limb.py — Integration test for GRA flag (2D horizontally
+demo_gra_limb.py — Integration test for GRA flag (2D horizontally
 inhomogeneous atmosphere) in limb-viewing geometry.
 
 Uses three standard RFM atmosphere profiles at different horizontal PSI
@@ -23,7 +23,7 @@ Tests:
      different horizontal columns on each leg.
 
 Run with:
-    python test/test_gra_limb.py
+    python test/demo_gra_limb.py
 """
 import sys
 import os

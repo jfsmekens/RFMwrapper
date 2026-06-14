@@ -1,5 +1,5 @@
 """
-test_bug30_nad_obs.py — Test for RFM bug #30 (NAD + OBS flags, no atmospheric contribution).
+demo_bug30_nad_obs.py — Test for RFM bug #30 (NAD + OBS flags, no atmospheric contribution).
 
 Bug #30 (reported 23APR21):
   Affects : v5.00–v5.10
@@ -29,7 +29,7 @@ Test design:
   - If RAD > B(T_surf)×TRA in CO₂/O₃ bands → atmosphere contributing correctly
 
 Run with:
-    python test/test_bug30_nad_obs.py
+    python test/demo_bug30_nad_obs.py
 """
 import sys
 import os

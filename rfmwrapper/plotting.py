@@ -50,6 +50,56 @@ def applyStyle() -> None:
 
 
 # ============================================================================
+# Qualitative "Dark" cycle
+# ============================================================================
+# Matplotlib's "Dark2" qualitative palette — used to colour discrete families
+# of spectra (output levels, elevations, tangent heights, filter bands, ILS)
+# so each member is distinct and legible on a white background.
+DARK_CYCLE: list[str] = [
+    mcolors.to_hex(plt.get_cmap('Dark2')(i)) for i in range(8)
+]
+
+
+def dark_colors(n: int) -> list[str]:
+    """Return *n* colours cycled from the :data:`DARK_CYCLE` Dark2 palette."""
+    return [DARK_CYCLE[i % len(DARK_CYCLE)] for i in range(n)]
+
+
+def lighten(color, amount: float = 0.6):
+    """Blend *color* toward white by *amount* (0 = unchanged, 1 = white)."""
+    r, g, b = mcolors.to_rgb(color)
+    return (r + (1 - r) * amount, g + (1 - g) * amount, b + (1 - b) * amount)
+
+
+def light_colors(n: int, amount: float = 0.6) -> list:
+    """Return *n* lightened :data:`DARK_CYCLE` colours (for background curves)."""
+    return [lighten(c, amount) for c in dark_colors(n)]
+
+
+def sweep_colors(values, cmap: str = 'cmc.batlow') -> list:
+    """
+    Map a sequence of sweep values onto colours from a continuous colourmap.
+
+    Parameters
+    ----------
+    values : sequence of float
+        Sweep values (one per member); colours are normalised over the range.
+    cmap : str or Colormap
+        Colourmap name (``'cmc.xxx'`` for cmcrameri) or a Colormap object.
+
+    Returns
+    -------
+    list
+        One RGBA colour per value.
+    """
+    cm = _resolve_cmap(cmap) if isinstance(cmap, str) else cmap
+    vals = np.asarray(values, dtype=float)
+    vmin = float(vals.min())
+    span = float(vals.max() - vals.min()) or 1.0
+    return [cm((float(v) - vmin) / span) for v in vals]
+
+
+# ============================================================================
 # Internal helpers
 # ============================================================================
 
@@ -126,6 +176,7 @@ def plotSpectra(
     color: str | None = None,
     cmap=None,
     species: str | None = None,
+    colors: list | None = None,
     wl_axis: bool = True,
     rad_wl: bool = False,
     title: str | None = None,
@@ -149,6 +200,10 @@ def plotSpectra(
         Gas species key (e.g. ``'SO2'``).  When neither ``color`` nor ``cmap``
         is given, the species-canonical colour (n=1) or colourmap (n>1) is
         applied automatically.
+    colors : list, optional
+        Explicit per-row colours (cycled if shorter than ``n_spectra``).  Takes
+        precedence over ``cmap``/``color``/``species``.  Used to apply the
+        :data:`DARK_CYCLE` to discrete families (output levels, ILS, filters).
     wl_axis : bool
         Add a secondary wavelength axis on top.
     rad_wl : bool
@@ -167,7 +222,9 @@ def plotSpectra(
 
     n = spectra.data.shape[0]
 
-    if cmap is not None:
+    if colors is not None:
+        colors = [colors[i % len(colors)] for i in range(n)]
+    elif cmap is not None:
         _cm = _resolve_cmap(cmap) if isinstance(cmap, str) else cmap
         colors = [_cm(i / max(n - 1, 1)) for i in range(n)]
     elif color is not None:
@@ -178,9 +235,13 @@ def plotSpectra(
         else:
             _cm = get_species_cmap(species)
             colors = [_cm(i / max(n - 1, 1)) for i in range(n)]
+    elif n > 1:
+        # Multiple discrete spectra (levels / elevations / tangent heights) —
+        # colour them with the qualitative Dark2 cycle for legibility.
+        colors = dark_colors(n)
     else:
         prop = plt.rcParams['axes.prop_cycle'].by_key()['color']
-        colors = [prop[i % len(prop)] for i in range(n)]
+        colors = [prop[0]]
 
     lu = _LABEL_UNITS.get(spectra.label_type, '')
     is_rad_wl = (spectra.output == 'rad') and rad_wl
@@ -265,6 +326,73 @@ def plotSpectraGrid(
 
 
 # ============================================================================
+# Parameter-sweep overlays
+# ============================================================================
+
+def plotSpectraSweep(
+    spectra_list: list,
+    values,
+    label: str = '',
+    ax: plt.Axes | None = None,
+    cmap: str = 'cmc.batlow',
+    row: int = 0,
+    wl_axis: bool = False,
+    legend_max: int = 12,
+    title: str | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Overlay one output across a parameter sweep, coloured by sweep value.
+
+    Parameters
+    ----------
+    spectra_list : list of Spectra
+        One :class:`Spectra` per sweep member (same output quantity).
+    values : sequence of float
+        Swept value for each member; sets the colour via *cmap* and the labels.
+    label : str
+        Name of the swept parameter (used in the legend / default title).
+    ax : plt.Axes, optional
+        Target axes; a new figure is created when ``None``.
+    cmap : str or Colormap
+        Colourmap used to shade members by sweep value.
+    row : int
+        Row index within each member's ``data`` to draw (default 0 — each sweep
+        member is typically a single spectrum).
+    wl_axis : bool
+        Add a secondary wavelength axis on top.
+    legend_max : int
+        Show the per-member legend only when there are at most this many
+        members (``0`` disables the legend).
+    title : str, optional
+        Axes title; a sensible default is used when ``None``.
+
+    Returns
+    -------
+    fig, ax : Figure, Axes
+    """
+    if not spectra_list:
+        raise ValueError("spectra_list is empty")
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.get_figure()
+
+    out = spectra_list[0].output
+    for s, v, c in zip(spectra_list, values, sweep_colors(values, cmap)):
+        ax.plot(s.wn, s.data[row], color=c, lw=1.0, label=f"{label}={v:g}")
+
+    ax.set_xlabel(r'Wavenumber [cm$^{-1}$]')
+    ax.set_ylabel(_YLABELS.get(out, out.upper()))
+    ax.set_title(title if title is not None
+                 else f"{out.upper()} — sweep over {label}")
+    if wl_axis:
+        _add_wl_axis(ax)
+    if 0 < len(spectra_list) <= legend_max:
+        ax.legend(fontsize=7)
+    return fig, ax
+
+
+# ============================================================================
 # Filter band overlay
 # ============================================================================
 
@@ -272,12 +400,20 @@ def plotFilterBands(
     filter_out,
     ax: plt.Axes,
     secondary: bool = False,
-    color: str = 'tab:orange',
+    color: str | None = None,
+    colors: list | None = None,
     sensor_label: str | None = None,
-    spectrum_index: int = 0,
+    spectrum_index: int | None = None,
+    annotate: bool = True,
+    guides: bool = True,
 ) -> plt.Axes | None:
     """
     Overlay band-integrated filter values on an existing spectral axes.
+
+    Each spectrum (row of ``filter_out.data``) is drawn as a small-marker
+    "band spectrum": the band points are joined by a light line so the set
+    reads as a coarse spectrum.  Multiple spectra (e.g. several output levels)
+    are coloured with the :data:`DARK_CYCLE`.
 
     Parameters
     ----------
@@ -287,12 +423,19 @@ def plotFilterBands(
         Axes to annotate (primary).
     secondary : bool
         If True, draw band points on a twin y-axis.
-    color : str
-        Colour for scatter points, vertical guides, and band labels.
+    color : str, optional
+        Force a single colour for every spectrum.  Overrides ``colors``.
+    colors : list, optional
+        Per-spectrum colours (cycled).  Defaults to the :data:`DARK_CYCLE`.
     sensor_label : str, optional
-        Legend entry.  Defaults to ``filter_out.sensor``.
-    spectrum_index : int
-        Row index in ``filter_out.data`` to visualise.
+        Legend entry prefix.  Defaults to ``filter_out.sensor``.
+    spectrum_index : int, optional
+        If given, draw only that one row; otherwise draw every spectrum.
+    annotate : bool
+        Draw the band-name labels (suppress when overlaying many spectra, e.g.
+        a sweep, so the labels are written only once).
+    guides : bool
+        Draw the light vertical band-centre guides (suppress on repeat calls).
 
     Returns
     -------
@@ -300,26 +443,116 @@ def plotFilterBands(
         Twin y-axes when ``secondary=True``; ``None`` otherwise.
     """
     wn_bands = filter_out.wn
-    values   = filter_out.data[spectrum_index]
+    data     = np.atleast_2d(filter_out.data)   # (n_spectra, n_bands)
     names    = filter_out.band_names
     label    = sensor_label or filter_out.sensor
 
+    rows = [spectrum_index] if spectrum_index is not None else list(range(data.shape[0]))
+    if color is not None:
+        row_colors = {i: color for i in rows}
+    else:
+        base = colors if colors is not None else DARK_CYCLE
+        row_colors = {i: base[k % len(base)] for k, i in enumerate(rows)}
+
+    lu = _LABEL_UNITS.get(getattr(filter_out, 'label_type', ''), '')
+    multi = len(rows) > 1
+
     draw_ax = ax.twinx() if secondary else ax
 
-    for i, (x, y, name) in enumerate(zip(wn_bands, values, names)):
-        ax.axvline(x, color=color, lw=0.8, ls='--', alpha=0.5)
-        draw_ax.scatter(x, y, color=color, s=60, zorder=5,
-                        label=f'{label} bands' if i == 0 else None)
-        draw_ax.annotate(name, xy=(x, y), xytext=(4, 4),
-                         textcoords='offset points', fontsize=7, color=color)
+    # Light vertical guides at each band centre (drawn once, not per spectrum).
+    if guides:
+        for x in wn_bands:
+            ax.axvline(x, color='0.75', lw=0.6, ls='--', alpha=0.5, zorder=1)
 
+    for k, i in enumerate(rows):
+        c = row_colors[i]
+        y = data[i]
+        # Light connecting line so the band points read as a spectrum.
+        draw_ax.plot(wn_bands, y, color=c, lw=0.9, alpha=0.55, zorder=4)
+        if multi:
+            leg = f"{label} — {filter_out.labels[i]:.2f}{lu}"
+        else:
+            leg = f"{label} bands"
+        draw_ax.scatter(wn_bands, y, color=c, s=18, zorder=5, label=leg)
+
+    # Band-name annotations once, against the first drawn spectrum.
+    if annotate:
+        for x, y, name in zip(wn_bands, data[rows[0]], names):
+            draw_ax.annotate(name, xy=(x, y), xytext=(3, 4),
+                             textcoords='offset points', fontsize=7, color='0.4')
+
+    draw_ax.legend(fontsize=8, loc='best')
     if secondary:
-        draw_ax.set_ylabel(_YLABELS.get(filter_out.output, ''), color=color)
-        draw_ax.tick_params(axis='y', labelcolor=color)
-        draw_ax.legend(fontsize=9, loc='upper right')
+        draw_ax.set_ylabel(_YLABELS.get(filter_out.output, ''))
         return draw_ax
 
     return None
+
+
+def plotFilterSweep(
+    filter_list: list,
+    values,
+    label: str = '',
+    spectra_list: list | None = None,
+    ax: plt.Axes | None = None,
+    cmap: str = 'cmc.batlow',
+    wl_axis: bool = True,
+    legend_max: int = 12,
+    title: str | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Overlay band-integrated filter spectra across a parameter sweep.
+
+    Each member's bands are drawn as a small-marker "band spectrum" coloured by
+    its sweep value; the optional full spectra are drawn lightened behind them.
+
+    Parameters
+    ----------
+    filter_list : list of FilterOut
+        One :class:`FilterOut` per sweep member (same sensor / output).
+    values : sequence of float
+        Swept value for each member (sets colour and legend).
+    label : str
+        Name of the swept parameter.
+    spectra_list : list of Spectra, optional
+        Matching full spectra to draw as lightened backgrounds.
+    ax : plt.Axes, optional
+    cmap : str or Colormap
+        Colourmap for the sweep colouring.
+    wl_axis : bool
+        Add a secondary wavelength axis.
+    legend_max : int
+        Drop the legend when there are more than this many members.
+    title : str, optional
+
+    Returns
+    -------
+    fig, ax : Figure, Axes
+    """
+    if not filter_list:
+        raise ValueError("filter_list is empty")
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.get_figure()
+
+    colors = sweep_colors(values, cmap)
+    for k, (fo, v, c) in enumerate(zip(filter_list, values, colors)):
+        if spectra_list is not None:
+            s = spectra_list[k]
+            ax.plot(s.wn, s.data[0], color=lighten(c, 0.6), lw=0.8, zorder=2)
+        plotFilterBands(fo, ax, color=c, annotate=(k == 0), guides=(k == 0),
+                        sensor_label=f"{label}={v:g}")
+
+    sensor = filter_list[0].sensor
+    ax.set_xlabel(r'Wavenumber [cm$^{-1}$]')
+    ax.set_title(title if title is not None
+                 else f"{sensor} — {filter_list[0].output.upper()} over {label}")
+    if len(filter_list) > legend_max and ax.get_legend():
+        ax.get_legend().remove()
+    if wl_axis:
+        _add_wl_axis(ax)
+    return fig, ax
 
 
 # ============================================================================
@@ -368,6 +601,131 @@ def plotILSKernel(
         fig.suptitle(title)
 
     return fig, axes
+
+
+# ============================================================================
+# ILS-convolved spectra
+# ============================================================================
+
+def plotILS(
+    ils_out,
+    raw=None,
+    ax: plt.Axes | None = None,
+    instrument: str = '',
+    colors: list | None = None,
+    wl_axis: bool = True,
+    title: str | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Plot ILS-convolved spectra, optionally over their raw (unconvolved) curves.
+
+    Parameters
+    ----------
+    ils_out : ILSOut
+        Convolved spectra (``data`` shape ``(n_spectra, n_wn)``).
+    raw : Spectra, optional
+        The pre-convolution spectra; drawn lightened behind the convolved ones.
+    ax : plt.Axes, optional
+    instrument : str
+        Instrument name for legend labels.
+    colors : list, optional
+        Per-row colours for the convolved curves; defaults to :data:`DARK_CYCLE`.
+    wl_axis : bool
+        Add a secondary wavelength axis.
+    title : str, optional
+
+    Returns
+    -------
+    fig, ax : Figure, Axes
+    """
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.get_figure()
+
+    if raw is not None:
+        rcolors = light_colors(raw.data.shape[0])
+        for i, rrow in enumerate(raw.data):
+            ax.plot(raw.wn, rrow, color=rcolors[i], lw=0.8, zorder=2)
+
+    n = ils_out.data.shape[0]
+    cols = colors if colors is not None else DARK_CYCLE
+    unit = _LABEL_UNITS.get(ils_out.label_type, '')
+    for i in range(n):
+        c = cols[i % len(cols)]
+        lbl = (f"{instrument} — {ils_out.labels[i]:.2f}{unit}" if n > 1
+               else (f"{instrument} (ILS)" if instrument else "ILS"))
+        ax.plot(ils_out.wn, ils_out.data[i], color=c, lw=1.2, zorder=3, label=lbl)
+
+    ax.set_xlabel(r'Wavenumber [cm$^{-1}$]')
+    ax.set_ylabel(_YLABELS.get(ils_out.output, ils_out.output.upper()))
+    if title is not None:
+        ax.set_title(title)
+    if wl_axis:
+        _add_wl_axis(ax)
+    ax.legend(fontsize=8)
+    return fig, ax
+
+
+def plotILSSweep(
+    ils_list: list,
+    values,
+    label: str = '',
+    raw_list: list | None = None,
+    ax: plt.Axes | None = None,
+    cmap: str = 'cmc.batlow',
+    wl_axis: bool = True,
+    legend_max: int = 12,
+    title: str | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Overlay ILS-convolved spectra across a parameter sweep, coloured by value.
+
+    Parameters
+    ----------
+    ils_list : list of ILSOut
+        One :class:`ILSOut` per sweep member (same instrument / output).
+    values : sequence of float
+        Swept value per member (sets colour and legend).
+    label : str
+        Name of the swept parameter.
+    raw_list : list of Spectra, optional
+        Matching raw spectra drawn lightened behind each convolved curve.
+    ax : plt.Axes, optional
+    cmap : str or Colormap
+    wl_axis : bool
+    legend_max : int
+        Show the legend only for at most this many members.
+    title : str, optional
+
+    Returns
+    -------
+    fig, ax : Figure, Axes
+    """
+    if not ils_list:
+        raise ValueError("ils_list is empty")
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.get_figure()
+
+    colors = sweep_colors(values, cmap)
+    for k, (io, v, c) in enumerate(zip(ils_list, values, colors)):
+        if raw_list is not None:
+            ax.plot(raw_list[k].wn, raw_list[k].data[0],
+                    color=lighten(c, 0.6), lw=0.8, zorder=2)
+        ax.plot(io.wn, io.data[0], color=c, lw=1.2, zorder=3,
+                label=f"{label}={v:g}")
+
+    out = ils_list[0].output
+    ax.set_xlabel(r'Wavenumber [cm$^{-1}$]')
+    ax.set_ylabel(_YLABELS.get(out, out.upper()))
+    ax.set_title(title if title is not None else f"ILS — {out.upper()} over {label}")
+    if wl_axis:
+        _add_wl_axis(ax)
+    if 0 < len(ils_list) <= legend_max:
+        ax.legend(fontsize=7)
+    return fig, ax
 
 
 # ============================================================================
@@ -588,7 +946,9 @@ def plotLimbMap(
 
     im = ax.pcolormesh(wn, tan_heights, data, cmap=_cmap,
                        vmin=vmin, vmax=vmax, shading='auto')
-    cbar = plt.colorbar(im, ax=ax)
+    # Use the axes' own figure (not pyplot's current figure) so the colorbar
+    # lands on the correct figure when these plots are embedded in a GUI canvas.
+    cbar = ax.figure.colorbar(im, ax=ax)
     cbar.set_label(_YLABELS.get(spectra.output, ''))
 
     ax.set_xlabel(r'Wavenumber [cm$^{-1}$]')
@@ -652,7 +1012,9 @@ def plotJacobians(
 
     im = ax.pcolormesh(wn, altitudes, data, cmap=_cmap,
                        vmin=vmin, vmax=vmax, shading='auto')
-    cbar = plt.colorbar(im, ax=ax)
+    # Use the axes' own figure (not pyplot's current figure) so the colorbar
+    # lands on the correct figure when these plots are embedded in a GUI canvas.
+    cbar = ax.figure.colorbar(im, ax=ax)
     cbar.set_label(_YLABELS.get('jac', ''))
 
     ax.set_xlabel(r'Wavenumber [cm$^{-1}$]')
@@ -663,6 +1025,72 @@ def plotJacobians(
     if title is not None:
         ax.set_title(title)
 
+    return fig, ax
+
+
+def plotJacobianSweep(
+    jac_list: list,
+    values,
+    label: str = '',
+    ax: plt.Axes | None = None,
+    cmap: str = 'cmc.batlow',
+    wl_axis: bool = True,
+    legend_max: int = 12,
+    title: str | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Overlay column Jacobian spectra across a parameter sweep, coloured by value.
+
+    Only valid for *column* Jacobians — one spectrum per member.  Layer
+    Jacobians are 2-D altitude×wavenumber maps and cannot be overlaid; plot each
+    sweep member separately with :func:`plotJacobians` instead.
+
+    Parameters
+    ----------
+    jac_list : list of Spectra
+        One Jacobian :class:`Spectra` (``output='jac'``) per sweep member; each
+        must have a single row (``data.shape[0] == 1``).
+    values : sequence of float
+        Swept value per member (sets colour and legend).
+    label : str
+        Name of the swept parameter.
+    ax : plt.Axes, optional
+    cmap : str or Colormap
+    wl_axis : bool
+    legend_max : int
+    title : str, optional
+
+    Returns
+    -------
+    fig, ax : Figure, Axes
+
+    Raises
+    ------
+    ValueError
+        If any member has more than one row (i.e. a layer Jacobian).
+    """
+    if not jac_list:
+        raise ValueError("jac_list is empty")
+    if any(j.data.shape[0] != 1 for j in jac_list):
+        raise ValueError(
+            "plotJacobianSweep overlays single-row (column) Jacobians; layer "
+            "Jacobians are 2-D altitude×wavenumber maps and cannot be overlaid "
+            "— plot each sweep member separately with plotJacobians().")
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.get_figure()
+
+    for j, v, c in zip(jac_list, values, sweep_colors(values, cmap)):
+        ax.plot(j.wn, j.data[0], color=c, lw=1.2, label=f"{label}={v:g}")
+
+    ax.set_xlabel(r'Wavenumber [cm$^{-1}$]')
+    ax.set_ylabel(_YLABELS.get('jac', ''))
+    ax.set_title(title if title is not None else f"Jacobian — sweep over {label}")
+    if wl_axis:
+        _add_wl_axis(ax)
+    if 0 < len(jac_list) <= legend_max:
+        ax.legend(fontsize=7)
     return fig, ax
 
 

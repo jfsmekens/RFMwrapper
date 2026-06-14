@@ -1399,6 +1399,14 @@ class RFM:
             if self.jacobians is not None:
                 drv.write("*JAC\n")
                 for param, alts in self.jacobians.items():
+                    # Surface Jacobians need the SFC flag, which RFM only emits
+                    # for nadir geometry — fail fast rather than silently produce
+                    # no output.
+                    if param.upper() in ('SFCTEM', 'SFCEMS') and self.type != 'nadir':
+                        raise ValueError(
+                            f"{param} Jacobian requires the SFC flag, which is "
+                            f"only set for nadir geometry (got type={self.type!r})."
+                        )
                     if alts is None:
                         # Scalar / column-integrated perturbation
                         drv.write(f"{param}\n")
@@ -2000,15 +2008,22 @@ class RFM:
         return self._ilsout[key]
 
     # -----------------------------------------------------------------------
-    def getJacobians(self, param: str = None) -> 'Spectra | dict':
+    def getJacobians(self, param: str = None, output: str = None) -> 'Spectra | dict':
         """
         Return Jacobian spectra from a JAC-flag run.
 
-        Each Jacobian file represents the sensitivity of the output spectrum
-        to a perturbation of one atmospheric parameter at one viewing geometry.
-        Multiple files (one per tangent height / elevation) are stacked into a
-        :class:`Spectra` object with ``label_type='tangent'`` (limb) or
-        ``'elevation'`` (nadir/zenith).
+        Each Jacobian file is the sensitivity of *one* spectral output quantity
+        (``rad``/``bbt``/``opt``/``tra``) to a perturbation of one atmospheric
+        parameter.  When several output flags are active, RFM writes a separate
+        Jacobian per quantity (e.g. ∂RAD/∂T *and* ∂BBT/∂T); these are distinct
+        quantities and are never combined.  This method therefore keys results
+        by ``(param, output)`` and returns a single output's Jacobian.
+
+        Within one ``(param, output)`` pair the rows correspond to the
+        perturbation altitudes (layer Jacobian, ``label_type='altitude'``) or
+        to the viewing geometries (column Jacobian over several elevations,
+        ``label_type='elevation'``); a single column Jacobian has one row
+        (``label_type='column'``).
 
         Parameters
         ----------
@@ -2016,20 +2031,24 @@ class RFM:
             Jacobian parameter name (e.g. ``'H2O'``, ``'TEM'``, ``'SFCTEM'``).
             Case-insensitive.  If ``None``, returns a dict of all available
             parameters mapped to their :class:`Spectra` objects.
+        output : str, optional
+            Which spectral output's Jacobian to return (``'rad'``, ``'bbt'``,
+            ``'opt'``, ``'tra'``).  When ``None``, the first available of
+            ``rad → bbt → tra → opt`` is used.
 
         Returns
         -------
         Spectra or dict of str → Spectra
-            If ``param`` is given, a single :class:`Spectra` whose rows
-            correspond to tangent heights / elevation angles.  If ``param`` is
-            ``None``, a dict keyed by parameter name.
+            If ``param`` is given, a single :class:`Spectra`.  If ``param`` is
+            ``None``, a dict keyed by parameter name (each for the chosen
+            ``output``).
 
         Raises
         ------
         RuntimeError
             If ``jacobians`` was not set at construction or RFM has not run.
         KeyError
-            If the requested ``param`` was not found in the Jacobian output.
+            If the requested ``param`` (or ``output``) is not present.
         """
         if not self.ran:
             raise RuntimeError("RFM has not been run yet.")
@@ -2040,31 +2059,54 @@ class RFM:
                 "spectra (boundary altitudes are interpolation anchors)."
             )
 
-        # Group records by parameter name
+        # Group records by parameter name, then by spectral output quantity.
         groups: dict = {}
         for rec in self._jac_raw:
             p = rec.get('param', 'unknown')
-            groups.setdefault(p, []).append(rec)
+            o = rec.get('output', 'rad')
+            groups.setdefault(p, {}).setdefault(o, []).append(rec)
+
+        def _select_output(out_map: dict) -> list:
+            """Pick the requested output's records, or a sensible default."""
+            if output is not None:
+                key_o = output.lower()
+                if key_o not in out_map:
+                    raise KeyError(
+                        f"Jacobian output {output!r} not found. "
+                        f"Available: {sorted(out_map)}")
+                return out_map[key_o]
+            for pref in ('rad', 'bbt', 'tra', 'opt'):
+                if pref in out_map:
+                    return out_map[pref]
+            return next(iter(out_map.values()))
 
         def _to_spectra(recs: list) -> 'Spectra':
-            # Sort by altitude (layer Jacobians) or keep single row (column)
+            # All recs here share one output quantity; rows differ by altitude
+            # (layer) or by viewing geometry (column over several elevations).
+            # ``labels`` must always have exactly one entry per stacked row.
             has_level = any(r['label_value'] is not None for r in recs)
             if has_level:
-                recs = sorted(recs, key=lambda r: (r['label_value'] or 0.0))
-            wn     = recs[0]['wn']
-            data   = np.vstack([r['data'] for r in recs])
-            if has_level:
+                recs   = sorted(recs, key=lambda r: (r['label_value'] or 0.0))
                 labels = np.array([r['label_value'] for r in recs])
                 lt     = 'altitude'
             else:
-                labels = np.array([0.0])
-                lt     = 'column'
+                elevs = [r.get('elev') for r in recs]
+                if (len(recs) > 1 and all(e is not None for e in elevs)
+                        and len(set(elevs)) == len(recs)):
+                    recs   = sorted(recs, key=lambda r: r['elev'])
+                    labels = np.array([r['elev'] for r in recs])
+                    lt     = 'elevation'
+                else:
+                    labels = np.zeros(len(recs))
+                    lt     = 'column'
+            wn   = recs[0]['wn']
+            data = np.vstack([r['data'] for r in recs])
             return Spectra(wn=wn, data=data, labels=labels,
                            label_type=lt, output='jac',
                            xunit='wn', yunit='')
 
         if param is None:
-            return {p: _to_spectra(recs) for p, recs in groups.items()}
+            return {p: _to_spectra(_select_output(om)) for p, om in groups.items()}
 
         key = param.upper()
         if key not in groups:
@@ -2073,7 +2115,7 @@ class RFM:
                 f"Jacobian parameter {param!r} not found. "
                 f"Available: {available}"
             )
-        return _to_spectra(groups[key])
+        return _to_spectra(_select_output(groups[key]))
 
     # -----------------------------------------------------------------------
     def getProfile(self) -> dict:

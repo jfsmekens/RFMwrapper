@@ -16,6 +16,11 @@ import pandas as pd
 from .constants import weights, AEROSOL_SPECIES
 from .config import get_xsc_dir
 
+# Trapezoidal integration: ``np.trapezoid`` (NumPy ≥ 2.0) replaced the now-
+# deprecated ``np.trapz``.  Resolve to whichever the installed NumPy provides
+# so the package works on both old and new versions.
+_trapz = getattr(np, 'trapezoid', None) or np.trapz
+
 logger = logging.getLogger(__name__)
 
 # Path to bundled data file — works regardless of working directory
@@ -437,7 +442,7 @@ def ppm2scd(ppm: float, pathlength, temp: float = 298, pres: float = 1013,
     n_tot = pres / R / temp
     n_gas = ppm * 1e-6 * n_tot
     if isinstance(pathlength, (list, np.ndarray)):
-        scd = np.trapezoid(n_gas, x=np.asarray(pathlength) * 1e3) / np.sin(np.deg2rad(elev))
+        scd = _trapz(n_gas, x=np.asarray(pathlength) * 1e3) / np.sin(np.deg2rad(elev))
     else:
         scd = n_gas * pathlength * 1e3
     if output == 'molec/cm2':
@@ -1098,7 +1103,7 @@ def filterConvolve(x: np.ndarray, y: np.ndarray,
             value = float(np.average(y, weights=T)) if T.sum() > 0 else np.nan
         elif method == 'integ':
             mask = T > 0
-            value = float(np.trapezoid(y[mask] * T[mask], x[mask])) if mask.any() else np.nan
+            value = float(_trapz(y[mask] * T[mask], x[mask])) if mask.any() else np.nan
         else:
             raise ValueError(f"method must be 'avg' or 'integ', got {method!r}")
 

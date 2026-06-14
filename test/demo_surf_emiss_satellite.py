@@ -1,5 +1,5 @@
 """
-test_surf_emiss_satellite.py — Verify surf_emiss / TRA behaviour at true satellite altitude.
+demo_surf_emiss_satellite.py — Verify surf_emiss / TRA behaviour at true satellite altitude.
 
 Tests whether the RFM v5.10 TRA ≈ (1−ε)·T_atm² finding holds when the observer
 is well above the top of atmosphere (h_obs=800 km), ruling out any artefact from
@@ -13,7 +13,7 @@ Runs three nadir RFM instances:
 Reports per-wavenumber residuals and max absolute error for the formula fit.
 
 Run with:
-    python test/test_surf_emiss_satellite.py
+    python test/demo_surf_emiss_satellite.py
 """
 import sys
 import os
