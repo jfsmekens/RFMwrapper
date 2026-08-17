@@ -42,7 +42,7 @@ def _zero_spectra():
 
 
 def _default_ils():
-    return makeILS(fov=0.03, max_opd=1.8, nper_wn=10, wn=2300.0, apod_type='NB medium')
+    return makeILS(fov=0.03, max_opd=1.8, nper_wn=10, wn_center=2300.0, apod_type='NB medium')
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +51,8 @@ def _default_ils():
 
 def test_makeils_required_keys():
     ils = _default_ils()
-    for key in ('kernel', 'wn_grid', 'apod', 'L_grid', 'fov_width', 'apod_type', 'fov', 'wn'):
+    for key in ('kernel', 'wn_grid', 'apod', 'L_grid', 'fov_width', 'apod_type',
+                'fov', 'wn_center'):
         assert key in ils
 
 
@@ -61,9 +62,9 @@ def test_makeils_kernel_wngrid_same_length():
 
 
 def test_makeils_metadata_preserved():
-    ils = makeILS(fov=0.05, max_opd=2.0, nper_wn=15, wn=1500.0, apod_type='Hann')
+    ils = makeILS(fov=0.05, max_opd=2.0, nper_wn=15, wn_center=1500.0, apod_type='Hann')
     assert ils['fov'] == 0.05
-    assert ils['wn'] == 1500.0
+    assert ils['wn_center'] == 1500.0
     assert ils['apod_type'] == 'Hann'
 
 
@@ -93,13 +94,53 @@ def test_makeils_kernel_trim():
 
 def test_makeils_fov_width_formula():
     fov, wn = 0.04, 2000.0
-    ils = makeILS(fov=fov, max_opd=1.8, nper_wn=10, wn=wn)
+    ils = makeILS(fov=fov, max_opd=1.8, nper_wn=10, wn_center=wn)
     assert np.isclose(ils['fov_width'], wn * (fov / 2) ** 2 / 2)
 
 
 def test_makeils_zero_fov_normalised():
-    ils = makeILS(fov=0.0, max_opd=1.8, nper_wn=10, wn=2300.0)
+    ils = makeILS(fov=0.0, max_opd=1.8, nper_wn=10, wn_center=2300.0)
     assert np.isclose(ils['kernel'].sum(), 1.0, atol=1e-6)
+
+
+def test_makeils_fov_broadening_has_no_subgrid_floor():
+    """
+    FOV self-apodization is applied analytically as sinc(fov_width * OPD), so
+    it acts at any magnitude.  The previous boxcar of ceil(fov_width * nper_wn)
+    grid points collapsed to a single point — the identity — whenever
+    fov_width fell below one grid spacing, silently discarding the FOV effect.
+    """
+    grid_spacing = 1.0 / 10
+    # fov_width well below one grid spacing at this wavenumber
+    ils_zero = makeILS(fov=0.0, max_opd=1.8, nper_wn=10, wn_center=1000.0)
+    ils_tiny = makeILS(fov=0.008, max_opd=1.8, nper_wn=10, wn_center=1000.0)
+    assert ils_tiny['fov_width'] < grid_spacing
+    assert not np.array_equal(ils_zero['kernel'], ils_tiny['kernel'])
+
+
+def test_makeils_fov_broadens_monotonically():
+    """
+    Wider FOV must broaden the ILS core.  Measured as equivalent width
+    (1 / peak, the kernel having unit area) — a second moment is unusable
+    here because it is dominated by sinc ringing, which FOV apodization
+    suppresses even as the core broadens.
+    """
+    widths = [1.0 / makeILS(fov=f, max_opd=1.8, nper_wn=10,
+                            wn_center=2300.0)['kernel'].max()
+              for f in (0.0, 0.02, 0.04, 0.06)]
+    assert all(b > a for a, b in zip(widths, widths[1:])), widths
+
+
+def test_makeils_apod_excludes_fov_term():
+    """
+    out['apod'] is the apodization function proper and stays within [0, 1];
+    the FOV sinc (which goes negative past its first zero) is applied to a
+    working copy only.
+    """
+    ils = makeILS(fov=0.06, max_opd=1.8, nper_wn=10, wn_center=2300.0)
+    assert ils['fov_width'] * ils['L_grid'].max() > 1.0   # past the first zero
+    assert ils['apod'].min() >= -1e-9
+    assert ils['apod'].max() <= 1.0 + 1e-9
 
 
 def test_makeils_invalid_apod_raises():
@@ -109,21 +150,21 @@ def test_makeils_invalid_apod_raises():
 
 @pytest.mark.parametrize('apod_type', _APOD_TYPES)
 def test_makeils_all_apod_types_normalised(apod_type):
-    ils = makeILS(fov=0.03, max_opd=1.8, nper_wn=10, wn=2300.0, apod_type=apod_type)
+    ils = makeILS(fov=0.03, max_opd=1.8, nper_wn=10, wn_center=2300.0, apod_type=apod_type)
     assert len(ils['kernel']) > 0
     assert np.isclose(ils['kernel'].sum(), 1.0, atol=1e-6)
 
 
 @pytest.mark.parametrize('apod_type', _APOD_TYPES)
 def test_makeils_apod_values_in_range(apod_type):
-    ils = makeILS(fov=0.0, max_opd=1.8, nper_wn=10, wn=2300.0, apod_type=apod_type)
+    ils = makeILS(fov=0.0, max_opd=1.8, nper_wn=10, wn_center=2300.0, apod_type=apod_type)
     assert ils['apod'].min() >= -1e-9
     assert ils['apod'].max() <= 1.0 + 1e-9
 
 
 @pytest.mark.parametrize('apod_type', _APOD_TYPES)
 def test_makeils_apod_starts_at_one(apod_type):
-    ils = makeILS(fov=0.0, max_opd=1.8, nper_wn=10, wn=2300.0, apod_type=apod_type)
+    ils = makeILS(fov=0.0, max_opd=1.8, nper_wn=10, wn_center=2300.0, apod_type=apod_type)
     if apod_type == 'NB weak':
         # Norton & Beer (1976) coefficients sum to 0.964 at OPD=0 by design
         assert np.isclose(ils['apod'][0], _NB_WEAK_APOD0, atol=1e-4)
@@ -203,7 +244,7 @@ def test_applyils_labels_copy():
 @pytest.mark.parametrize('apod_type', ['Boxcar', 'Triangular', 'NB medium', 'Hann', 'Blackman-Harris'])
 def test_applyils_flat_across_apod_types(apod_type):
     spec = _flat_spectra()
-    ils = makeILS(fov=0.03, max_opd=1.8, nper_wn=10, wn=2300.0, apod_type=apod_type)
+    ils = makeILS(fov=0.03, max_opd=1.8, nper_wn=10, wn_center=2300.0, apod_type=apod_type)
     out = applyILS(spec, ils)
     half = len(ils['kernel']) // 2
     assert np.abs(out.data[:, half:-half] - 1.0).max() < 1e-6

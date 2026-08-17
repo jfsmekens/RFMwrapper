@@ -479,7 +479,7 @@ def applyILS(spectra: Spectra, ils: dict | str,
         nper_wn = 1.0 / float(np.mean(np.diff(spectra.wn)))
         wn_mid  = float(spectra.wn[len(spectra.wn) // 2])
         ils = makeILS(fov=params['fov'], max_opd=params['max_opd'],
-                      nper_wn=nper_wn, wn=wn_mid,
+                      nper_wn=nper_wn, wn_center=wn_mid,
                       apod_type=params['apod_type'],
                       fwhm_wn=params.get('fwhm_wn', None))
     elif resample:
@@ -1967,9 +1967,9 @@ class RFM:
                 "the native output spacing can be looked up."
             )
 
-        wn_centre = (self.wn_start + self.wn_stop) / 2.0
+        wn_center = (self.wn_start + self.wn_stop) / 2.0
         ils = makeILS(fov=fov, max_opd=max_opd, nper_wn=self.nperwn,
-                      wn=wn_centre, apod_type=apod_type, fwhm_wn=fwhm_wn)
+                      wn_center=wn_center, apod_type=apod_type, fwhm_wn=fwhm_wn)
 
         self._ilsout = {}
         for key in self._out:

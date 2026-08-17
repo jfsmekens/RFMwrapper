@@ -126,9 +126,9 @@ tra_ils = model.getILSOut('tra')
 opt_ils = model.getILSOut('opt')
 
 # Rebuild the kernel with the resolved parameters for kernel diagnostics/plot
-wn_centre = (WN_START + WN_STOP) / 2.0
+wn_center = (WN_START + WN_STOP) / 2.0
 ils = rw.makeILS(fov=fov_used, max_opd=max_opd_used, nper_wn=NPERWN,
-                 wn=wn_centre, apod_type=apod_used, fwhm_wn=fwhm_used)
+                 wn_center=wn_center, apod_type=apod_used, fwhm_wn=fwhm_used)
 print(f"  kernel length     : {len(ils['kernel'])} pts")
 print(f"  FOV broadening    : {ils['fov_width']:.4f} cm⁻¹")
 print(f"  Nominal resolution: {0.9 / max_opd_used:.3f} cm⁻¹")

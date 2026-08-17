@@ -1188,7 +1188,7 @@ _APOD_TYPES = [
 
 
 def makeILS(fov: float = 0.03, max_opd: float = 1.8, nper_wn: float = 25,
-            wn: float = 1000.0, apod_type: str = 'NB medium',
+            wn_center: float = 1000.0, apod_type: str = 'NB medium',
             fwhm_wn: float = None) -> dict:
     """
     Compute an Instrument Line Shape (ILS) kernel for an FT‑IR spectrometer.
@@ -1201,8 +1201,12 @@ def makeILS(fov: float = 0.03, max_opd: float = 1.8, nper_wn: float = 25,
         Maximum optical path difference in cm.
     nper_wn : float
         Number of kernel grid points per cm⁻¹ (typically 1 / spectral spacing).
-    wn : float
-        Centre wavenumber in cm⁻¹; used to compute the FOV boxcar half-width.
+    wn_center : float
+        Centre wavenumber of the window in cm⁻¹, setting the FOV width via
+        ``fov_width = wn_center * (fov/2)**2 / 2``.  This is the window
+        *centre*, not its width — passing half the window width (as plumeIR v2
+        did) shrinks ``fov_width`` by ~40x and effectively disables the FOV
+        effect.  Renamed from ``wn`` to make that misuse harder.
     apod_type : str
         Apodization type. One of: 'Boxcar', 'Triangular', 'Hann', 'Hamming',
         'Happ-Genzel', 'Blackman-Harris', 'Nuttall', 'Kaiser', 'Tukey',
@@ -1218,10 +1222,11 @@ def makeILS(fov: float = 0.03, max_opd: float = 1.8, nper_wn: float = 25,
     -------
     dict
         Keys: 'wn_grid', 'kernel', 'L_grid', 'apod', 'apod_type', 'fov',
-        'fov_width', 'wn'.
+        'fov_width', 'wn_center'.  'apod' is the apodization window *before*
+        FOV self-apodization, so it remains bounded by [0, 1].
     """
 
-    out = {'apod_type': apod_type, 'fov': fov, 'wn': wn}
+    out = {'apod_type': apod_type, 'fov': fov, 'wn_center': wn_center}
     apod_key = apod_type.lower()
 
     L = max_opd
@@ -1337,24 +1342,35 @@ def makeILS(fov: float = 0.03, max_opd: float = 1.8, nper_wn: float = 25,
     #                     FFT → ILS KERNEL
     # ============================================================
 
-    kernel = np.fft.fft(np.concatenate((apod, filler))).real
+    # ============================================================
+    #                     FOV SELF-APODIZATION
+    # ============================================================
+    # Broadening by a rectangle of width fov_width in wavenumber is exactly
+    # multiplication by sinc(fov_width * OPD) in the interferogram domain
+    # (np.sinc is the normalised sin(pi z)/(pi z)).
+    #
+    # This replaces a boxcar convolution of ceil(fov_width * nper_wn) grid
+    # points.  That integer count over-broadened the FOV term by up to a full
+    # grid cell — 60% at small fov / low wavenumber, erratic elsewhere — and
+    # silently dropped the FOV effect altogether whenever fov_width fell below
+    # one grid spacing (n_box forced to 1 = identity).  The sinc form is exact
+    # rather than discretized, and continuous in fov at any magnitude.
+    #
+    # Applied to a copy: out['apod'] keeps the apodization function proper,
+    # which stays within [0, 1]; the sinc goes negative past its first zero
+    # (fov_width * max_opd > 1).
+
+    fov_width = wn_center * (fov / 2) ** 2 / 2
+    apod_fov = apod * np.sinc(fov_width * L_grid)
+
+    kernel = np.fft.fft(np.concatenate((apod_fov, filler))).real
     mid    = n_tot // 2
     kernel = np.concatenate((kernel[mid:], kernel[:mid]))
     kernel = kernel - kernel[:mid // 2].mean()
 
     wn_grid = np.linspace(-_kernel_opd / 2, _kernel_opd / 2, n_tot)
 
-    # ============================================================
-    #                     FOV BROADENING
-    # ============================================================
-
-    fov_width = wn * (fov / 2) ** 2 / 2
-    n_box = int(np.ceil(fov_width * nper_wn))
-    if n_box < 1 or n_box > mid:
-        n_box = 1
-    boxcar = np.ones(n_box) / n_box
-    kernel = np.convolve(kernel, boxcar, 'same')
-
+    # A finite FOV displaces line centres as well as broadening them.
     shift = fov_width / 2
     kernel = np.interp(wn_grid, wn_grid - shift, kernel)
 

@@ -64,9 +64,9 @@ max_opd_used = ils_params['max_opd']
 apod_used   = ils_params['apod_type']
 fwhm_used   = ils_params.get('fwhm_wn', None)
 
-wn_centre = (WN_START + WN_STOP) / 2.0
+wn_center = (WN_START + WN_STOP) / 2.0
 ils = rw.makeILS(fov=fov_used, max_opd=max_opd_used, nper_wn=NPERWN,
-                 wn=wn_centre, apod_type=apod_used, fwhm_wn=fwhm_used)
+                 wn_center=wn_center, apod_type=apod_used, fwhm_wn=fwhm_used)
 
 print(f"  ILS: {ILS}  apod={apod_used}  OPD={max_opd_used} cm  "
       f"FOV={fov_used * 1e3:.2f} mrad  kernel={len(ils['kernel'])} pts")

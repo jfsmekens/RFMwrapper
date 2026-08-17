@@ -190,7 +190,7 @@ ils_out = model.getILSOut('rad')   # ILSOut object, same structure as Spectra
 model.applyILS(fov=0.030, max_opd=1.7, apod_type='NB medium')
 
 # Standalone function
-ils = rw.makeILS(fov=0.030, max_opd=1.7, nper_wn=25, wn=1000,
+ils = rw.makeILS(fov=0.030, max_opd=1.7, nper_wn=25, wn_center=1000,
                  apod_type='Gaussian', fwhm_wn=0.5)
 ils_out = rw.applyILS(spectra, ils)
 ```
