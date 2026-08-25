@@ -178,6 +178,8 @@ def insertPlume(atm: dict, h: float, th: float, plume: dict = None,
           enhancements [ppmv] above the existing background profile.
         * For species **absent** from ``atm``: values are the **peak total
           concentration** [ppmv] in the plume (background is implicitly zero).
+          This holds for every ``gradient_flag`` — the shape is peak-normalised
+          in all three cases.
           To use a non-zero background for an absent species, add it first
           with :func:`adjustAtm` before calling this function.
 
@@ -188,7 +190,14 @@ def insertPlume(atm: dict, h: float, th: float, plume: dict = None,
 
         * 0 — uniform (step function)
         * 1 — triangular, peak at centre (default)
-        * 2 — Gaussian
+        * 2 — Gaussian, truncated at ±2.5σ (σ = th/5)
+
+        All three are peak-normalised and confined to ``[h - th/2, h + th/2]``
+        by zero guard levels, so the plume never extends beyond the requested
+        thickness.  Column per unit peak VMR differs by shape: ``th`` for
+        uniform, ``th/2`` for triangular, ``0.495·th`` for Gaussian (the
+        truncation drops 1.24% of the nominal integral and is not
+        renormalised).
 
     Returns
     -------
@@ -226,11 +235,24 @@ def insertPlume(atm: dict, h: float, th: float, plume: dict = None,
         xx = np.asarray([h1, h, h2])
         yy = np.asarray([0.0, 1.0, 0.0])
     elif gradient_flag == 2:
-        step = th / 9
-        xx = np.arange(h1, h2 + step, step)
         sig = (h - h1) / 2.5
-        yy = (1.0 / (np.sqrt(2.0 * np.pi) * sig)
-              * np.exp(-np.power((xx - h) / sig, 2.0) / 2))
+        # An ODD number of samples so the centre is on the grid and the peak is
+        # actually attained: arange(h1, h2+th/9, th/9) gave 10 points straddling
+        # h, so the sampled peak was 0.962 of the requested VMR.
+        xx = np.linspace(h1, h2, 11)
+        # Peak-normalised, so `plume` means peak VMR exactly as it does for
+        # gradient_flag 0 and 1.  This previously used the Gaussian *density*
+        # 1/(sqrt(2 pi) sigma), which for a 0.4 km plume made the peak 4.8x the
+        # requested value while flags 0 and 1 gave 1.0x.
+        yy = np.exp(-np.power((xx - h) / sig, 2.0) / 2)
+        # Guard levels, as flag 0 has.  The Gaussian is truncated at +/-2.5
+        # sigma, where it is still 0.219 of peak; with no zeros immediately
+        # outside the band, RFM interpolates from that edge value down to the
+        # nearest *background* level.  On a 1 km background grid that placed
+        # 15.1% of the inserted column outside the nominal plume, spread over
+        # the km below and above it.
+        xx = np.concatenate([[h1 - 0.001], xx, [h2 + 0.001]])
+        yy = np.concatenate([[0.0], yy, [0.0]])
     else:
         raise ValueError('gradient_flag must be 0, 1, or 2')
 
@@ -1363,12 +1385,21 @@ def makeILS(fov: float = 0.03, max_opd: float = 1.8, nper_wn: float = 25,
     fov_width = wn_center * (fov / 2) ** 2 / 2
     apod_fov = apod * np.sinc(fov_width * L_grid)
 
-    kernel = np.fft.fft(np.concatenate((apod_fov, filler))).real
-    mid    = n_tot // 2
-    kernel = np.concatenate((kernel[mid:], kernel[:mid]))
-    kernel = kernel - kernel[:mid // 2].mean()
-
-    wn_grid = np.linspace(-_kernel_opd / 2, _kernel_opd / 2, n_tot)
+    # fftshift both halves of the transform pair so the kernel's DC component
+    # and wn_grid's zero coincide *by construction*.
+    #
+    # The previous form rolled by ``mid = n_tot // 2`` but built the grid with
+    # ``linspace(..., n_tot)``, which places zero at index ``(n_tot - 1) / 2``.
+    # Those differ by half a sample for even ``n_tot`` and a full sample for
+    # odd, so the kernel sat off its own grid: measured with ``fov = 0`` (no
+    # intentional shift, peak must be at zero) the offset was exactly 0.500 and
+    # 1.000 samples respectively.  For a convolution-only consumer that is a
+    # small spectral shift; plumeIR, which *fits* a wavenumber shift, was
+    # silently absorbing it into ``nu_shift``, where it varied with nper_wn.
+    dx      = float(L_grid[1] - L_grid[0])
+    kernel  = np.fft.fftshift(np.fft.fft(np.concatenate((apod_fov, filler))).real)
+    wn_grid = np.fft.fftshift(np.fft.fftfreq(n_tot, d=dx))
+    kernel  = kernel - kernel[:n_tot // 4].mean()
 
     # A finite FOV displaces line centres as well as broadening them.
     shift = fov_width / 2

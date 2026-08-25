@@ -15,6 +15,9 @@ Python wrapper for the [Reference Forward Model (RFM)](http://eodg.atm.ox.ac.uk/
 - Spectral output as NumPy arrays for post-processing (ILS convolution, filter integration, resampling)
 - Unit-aware spectral objects with wavenumber ↔ wavelength conversion
 
+It also ships **RFMViewer**, an interactive desktop GUI for configuring runs (single or
+batch), launching them, and exploring the results — see [Graphical interface](#graphical-interface-rfmviewer).
+
 ---
 
 ## Requirements
@@ -123,6 +126,48 @@ spectra = [r.getSpectra('tra') for r in results]
 ```
 
 Each instance gets its own isolated temporary work directory automatically.
+
+---
+
+## Graphical interface (RFMViewer)
+
+`RFMViewer` is an interactive Tkinter desktop GUI for building, running, and visualizing
+RFM simulations without writing a script. After `pip install -e .` it is available as a
+console command:
+
+```bash
+rfm-viewer
+# equivalently:
+python -m rfmwrapper.rfm_viewer
+```
+
+**Layout**
+
+- **Left panel** — collapsible configuration sections: *Geometry* (with geometry-aware
+  default values and spinbox steppers), *Spectral Range*, *Gases* (with a species/VMR
+  picker popup), *Output*, *Physics*, *Advanced* (structured Jacobian editor, XSC,
+  binary/diagnostics), and *Batch Sweep*. A live log viewer mirrors `rfm.log`.
+- **Toolbar** — **Load**/**Save** a configuration to JSON, a prominent **RUN** button, and
+  a progress bar for batch runs.
+- **Right panel** — result tabs: **Spectra**, **Atmosphere**, **Jacobians**,
+  **Filters / ILS**, and **Diagnostics**. Each embeds a Matplotlib canvas with the standard
+  navigation toolbar.
+
+**Highlights**
+
+- **Batch sweeps** — vary one parameter (e.g. `surf_temp`, a gas VMR, elevation) over a
+  range or list; results overlay in the Spectra tab coloured by sweep value (selectable
+  cmcrameri/Matplotlib colour map).
+- **Sweep-aware post-processing** — *Filters / ILS* and *Jacobians* operate across every
+  sweep member, not just the first.
+- **Structured Jacobian editor** — add Jacobian targets as rows (`TEM`, `PRE`, `SFCTEM`,
+  `SFCEMS`, `AEROSOL`, gases, isotopes…), each column- or layer-resolved, with prerequisite
+  validation (e.g. surface Jacobians require nadir geometry).
+- **Gas/VMR picker** — tick species from the full RFM gas list and enter per-gas layer VMRs.
+
+Runs execute on a background thread (single) or a process pool (batch), so the UI stays
+responsive. macOS/Windows batch runs require the usual `if __name__ == '__main__':` guard,
+which the launcher provides.
 
 ---
 
@@ -292,6 +337,29 @@ fig, ax = rw.plotRayPath(parsed, 'H2O')  # slant column per layer for one gas
 
 ---
 
+## Jacobians
+
+Request Jacobians (∂spectrum/∂parameter) via the `jacobians` dict at construction, then
+read them back per target — and per output quantity:
+
+```python
+model = rw.RFM('nadir', 800, 1000, 25, gas='H2O CO2', out='RAD BBT',
+               jacobians={'TEM': None,             # column (whole-profile) perturbation
+                          'H2O': [0, 5, 10, 20]})   # layer perturbation at these altitudes
+model.run()
+
+jac = model.getJacobians('TEM')                # ∂RAD/∂T (default output)
+jac = model.getJacobians('TEM', output='bbt')  # ∂BBT/∂T
+all_jac = model.getJacobians()                 # {param: Spectra} for the default output
+```
+
+When several output flags are active, RFM writes one Jacobian per quantity (∂RAD, ∂BBT, …);
+`getJacobians` keys results by `(param, output)` and never mixes them. Layer Jacobians follow
+RFM's rule that *N* altitudes produce *N−2* triangular-layer spectra. Surface targets
+(`SFCTEM`, `SFCEMS`) require nadir geometry.
+
+---
+
 ## Plotting
 
 All standalone figure functions live in `rfmwrapper.plotting` and return `(fig, ax)` or `(fig, axes)`:
@@ -305,7 +373,32 @@ fig, axes = rw.plotSpectraGrid({'rad': s_rad, 'tra': s_tra})
 fig, ax  = rw.plotAtmProfile(atm, 'H2O')
 fig, axes = rw.plotAtmGrid(atm, ['H2O', 'CO2', 'TEM', 'PRE'])
 fig, ax  = rw.plotLimbMap(spectra)
-fig, ax  = rw.plotJacobians(jac_spectra)
+fig, ax  = rw.plotJacobians(jac_spectra)       # 2-D altitude × wavenumber map
+fig, ax  = rw.plotFilterBands(filt, ax)        # band-integrated points over a spectrum
+fig, ax  = rw.plotILS(ils_out, raw=spectra)    # ILS-convolved curves + raw background
+```
+
+Multiple spectra (output levels, elevations, tangent heights) are coloured with a
+qualitative "Dark2" cycle automatically.
+
+### Sweep overlays
+
+The same overlays the GUI uses are available standalone — pass a list of containers (one per
+batch member) plus the sweep values to colour each member by its value:
+
+```python
+results = rw.runBatch(jobs)
+values  = [...]                                # the swept parameter values
+
+spectra = [r.getSpectra('rad') for r in results]
+fig, ax = rw.plotSpectraSweep(spectra, values, label='SO2 VMR', cmap='cmc.batlow')
+
+# filters / ILS / column Jacobians across the sweep
+fig, ax = rw.plotFilterSweep(filter_list, values, spectra_list=spectra, label='elev')
+fig, ax = rw.plotILSSweep(ils_list, values, raw_list=raw_list, label='elev')
+fig, ax = rw.plotJacobianSweep(jac_list, values, label='surf_temp')
+
+colors  = rw.sweep_colors(values, cmap='cmc.batlow')   # the underlying value→colour map
 ```
 
 Species-specific colours and colormaps (cmcrameri-based) are looked up automatically:
@@ -388,7 +481,9 @@ rfmwrapper/
 ├── functions.py      Atmosphere I/O, Planck, ILS kernel, filter convolution,
 │                     XSC utilities, unit conversions, spectral resampling,
 │                     ray-path parsing
-├── plotting.py       All standalone figure functions (no plt.show())
+├── plotting.py       All standalone figure functions (no plt.show()),
+│                     including the sweep-overlay helpers used by the GUI
+├── rfm_viewer.py     RFMViewer desktop GUI (console script: rfm-viewer)
 ├── config.py         Path resolution: config file, env var, fallback chain
 ├── constants.py      Gas species lists, AEROSOL_SPECIES, molecular weights,
 │                     plot colours/cmaps
