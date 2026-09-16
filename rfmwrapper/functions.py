@@ -1246,6 +1246,35 @@ def makeILS(fov: float = 0.03, max_opd: float = 1.8, nper_wn: float = 25,
         Keys: 'wn_grid', 'kernel', 'L_grid', 'apod', 'apod_type', 'fov',
         'fov_width', 'wn_center'.  'apod' is the apodization window *before*
         FOV self-apodization, so it remains bounded by [0, 1].
+
+    Notes
+    -----
+    Smooth in ``fov``, **not** in ``max_opd``.
+
+    The FOV term is applied analytically as ``sinc(fov_width * OPD)`` and the
+    kernel is centred by ``fftshift``, so both are continuous in their
+    parameters at any magnitude.  A finite-difference Jacobian in ``fov`` is
+    therefore well behaved, and this function is safe to use in a fit that
+    treats ``fov`` as free.
+
+    ``max_opd`` is different.  It sets the OPD sample count via
+    ``n = int(max_opd * nper_wn)`` (forced odd), and the trim half-width via
+    ``5 / max_opd``.  Both quantize, so the kernel is a *staircase* in
+    ``max_opd``: its derivative is zero almost everywhere and jumps at the
+    grid transitions.  This is harmless in the normal case, where ``max_opd``
+    is a fixed instrument property and the kernel is simply applied to a
+    spectrum.
+
+    If ``max_opd`` is a **free parameter** in a retrieval, use
+    :func:`plumeIR.forward.ils.make_ils` instead.  It holds the OPD grid fixed
+    independently of ``max_opd``, which then enters only through the
+    apodization window's argument, with a fractional weight on the sample
+    straddling the truncation edge.
+
+    See Also
+    --------
+    plumeIR.forward.ils.make_ils : equivalent with a smooth ``max_opd``
+        dependence; use when fitting ``max_opd``.
     """
 
     out = {'apod_type': apod_type, 'fov': fov, 'wn_center': wn_center}
