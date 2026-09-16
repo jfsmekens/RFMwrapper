@@ -13,7 +13,7 @@ from glob import glob
 from .config import (
     _CONFIG_FILE,
     get_rfm_dir, get_hitran_path,
-    get_exec_path, get_atm_dir, get_aria_dir,
+    get_exec_path, get_atm_dir,
     write_config,
 )
 
@@ -143,7 +143,6 @@ def show() -> None:
     print(f"{'rfm_dir':<16} {rfm_dir:<45} {_source('RFM_DIR',    'rfm_dir',    '~/RFM')}")
     print(f"{'exec':<16} {get_exec_path():<45} derived from rfm_dir")
     print(f"{'atm_dir':<16} {get_atm_dir():<45} derived from rfm_dir")
-    print(f"{'aria_dir':<16} {get_aria_dir():<45} derived from rfm_dir")
     print(f"{'hitran_path':<16} {str(hitran):<45} {_source('HITRAN_PATH', 'hitran_path', 'rfm_dir/Hitran/')}")
     print(f"{'filters':<16} {'bundled in package':<45} rfmwrapper/filters/")
     print()

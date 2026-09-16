@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from .config import (get_rfm_dir, get_hitran_path, get_xsc_dir,
-                     get_exec_path, get_atm_dir, get_aria_dir)
+                     get_exec_path, get_atm_dir)
 from .functions import (listSensors, _loadFilters, makeILS,
                         loadILSParams,
                         readAtm as _readAtm, writeAtm as _writeAtm,
@@ -39,7 +39,6 @@ __RFMDIR__    = get_rfm_dir()
 __EXECPATH__  = get_exec_path()
 __HITRANPATH__ = get_hitran_path()
 __ATMPATH__   = get_atm_dir()
-__ARIAPATH__  = get_aria_dir()
 __XSCPATH__   = get_xsc_dir()
 
 if os.path.exists(__EXECPATH__):
@@ -56,9 +55,6 @@ if os.path.exists(__ATMPATH__):
     logger.info('Atmosphere directory: %s', __ATMPATH__)
 else:
     logger.warning('Atmosphere directory not found: %s.', __ATMPATH__)
-
-if __ARIAPATH__ and os.path.exists(__ARIAPATH__):
-    logger.info('ARIA directory: %s', __ARIAPATH__)
 
 _possible_types = ['layer', 'zenith', 'nadir', 'limb']
 
@@ -587,8 +583,6 @@ class RFM:
         Directory where the driver file is written.
     atm_dir : str, optional
         Directory containing standard atmosphere files.
-    aria_dir : str, optional
-        Directory containing ARIA aerosol data.
     tan_heights : list of float, optional
         Tangent heights [km] for ``type='limb'``.  Required when ``type='limb'``.
     out : str
@@ -676,7 +670,7 @@ class RFM:
                  atm_path: str = None, atm_type: str = None, adjust: dict = None,
                  exec_path: str = None, hitran_path: str = None,
                  out_path: str = None, drv_path: str = None,
-                 atm_dir: str = None, aria_dir: str = None,
+                 atm_dir: str = None,
                  tan_heights: list = None,
                  out: str = 'RAD BBT OPT TRA',
                  physics: dict = None,
@@ -759,16 +753,6 @@ class RFM:
             self.atm_dir = atm_dir
         else:
             raise ValueError(f"Atmosphere directory not found: {atm_dir}")
-
-        # ----- ARIA directory (optional) -----
-        self.aria_dir = None
-        if aria_dir is None:
-            if os.path.exists(__ARIAPATH__):
-                self.aria_dir = __ARIAPATH__
-        elif os.path.exists(aria_dir):
-            self.aria_dir = aria_dir
-        elif aria_dir is not None:
-            raise ValueError(f"ARIA directory not found: {aria_dir}")
 
         # ----- Viewing geometry -----
         if h_obs is None:
@@ -1950,6 +1934,14 @@ class RFM:
             native output grid after convolution.  Requires ``instrument`` to
             be specified and the instrument entry to have a ``'spacing'``
             field; raises ``ValueError`` otherwise.
+
+        Notes
+        -----
+        The kernel inherits :func:`makeILS`'s parameter smoothness: continuous
+        in ``fov``, quantized in ``max_opd``.  That is immaterial here, since
+        this method applies a kernel rather than differentiating one, but see
+        :func:`makeILS` before treating ``max_opd`` as a free parameter in a
+        retrieval.
         """
         if not self.ran:
             raise RuntimeError("RFM has not been run yet.")

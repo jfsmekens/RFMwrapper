@@ -38,6 +38,40 @@ conda activate rfm
 pip install -e .
 ```
 
+### Installing RFM
+
+`rfmwrapper` drives RFM; it does not ship it. RFM is distributed by Oxford
+(AOPP) on personal request — see the
+[RFM installation guide](https://eodg.atm.ox.ac.uk/RFM/sum/rfm_installation.html).
+
+**If you already have RFM compiled**, skip to [Configure paths](#configure-paths)
+and point `rfm_dir` at it. Nothing needs rebuilding. The tree only has to carry
+the standard layout — `source/rfm`, `atm/`, `Hitran/` — since every other path
+derives from `rfm_dir`.
+
+**If you need to build it:**
+
+```bash
+brew install gcc                  # any gfortran will do
+cd ~/RFM/source && make
+python -m rfmwrapper configure
+```
+
+That is the stock makefile with no flag changes.
+
+> **Building with conda's gfortran on recent macOS?** The link step fails with
+> `unknown architecture arm64e.x1-macos` — conda's linker cannot read the
+> current Command Line Tools SDK. Force Apple's linker instead:
+> `make F90="gfortran -B/usr/bin"`. Homebrew's gfortran does not hit this.
+
+> **Moving RFM to another machine?** Copy the source tree and run `make` there,
+> rather than copying the compiled `rfm`. The binary records an absolute path
+> to its Fortran runtime (`/opt/homebrew/...` or equivalent), so it aborts with
+> a `dyld` error on a machine where that path does not exist. Recompiling takes
+> about two minutes and avoids the problem entirely.
+
+---
+
 ### Configure paths
 
 After installation, tell `rfmwrapper` where your RFM is installed:
@@ -68,6 +102,13 @@ Each path is resolved in priority order: runtime override → environment variab
 import rfmwrapper
 rfmwrapper.__HITRANPATH__ = '/data/shared/HITRAN/hitran2020.bin'
 ```
+
+> **ARIA is not an rfmwrapper path.** Older installs unpacked the ARIA
+> refractive index archive inside the RFM tree as `$RFM_DIR/ARIA`, so it is
+> sometimes assumed to belong here. It does not: RFM never reads ARIA — it
+> consumes the `.xsc` cross-sections that [mieEODG](https://github.com/jfsmekens/mieEODG)
+> writes from it. ARIA is configured through mieEODG
+> (`python -m mieEODG configure`), and its default location is `~/ARIA`.
 
 ---
 

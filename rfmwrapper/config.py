@@ -113,11 +113,6 @@ def get_atm_dir() -> str:
     return os.path.join(get_rfm_dir(), 'atm')
 
 
-def get_aria_dir() -> str:
-    """Return the ARIA aerosol data directory ($rfm_dir/ARIA/)."""
-    return os.path.join(get_rfm_dir(), 'ARIA')
-
-
 def get_xsc_dir() -> str:
     """Return the default XSC data directory ($rfm_dir/xsc/).
 

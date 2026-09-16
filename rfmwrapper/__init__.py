@@ -20,7 +20,6 @@ from .objects import (
     __XSCPATH__,
     __HITRANPATH__,
     __ATMPATH__,
-    __ARIAPATH__,
     std_atmospheres,
 )
 
@@ -104,7 +103,7 @@ from .plotting import (
     STYLE,
 )
 from .config import (get_rfm_dir, get_hitran_path,
-                     get_exec_path, get_atm_dir, get_aria_dir,
+                     get_exec_path, get_atm_dir,
                      write_config, _CONFIG_FILE)
 
 __all__ = [
@@ -120,7 +119,7 @@ __all__ = [
     'runBatch',
     # Path globals
     '__RFMDIR__', '__EXECPATH__', '__HITRANPATH__', '__XSCPATH__',
-    '__ATMPATH__', '__ARIAPATH__',
+    '__ATMPATH__',
     'std_atmospheres',
     # Functions
     'readAtm', 'writeAtm', 'adjustAtm', 'insertPlume', 'sliceAtm',
@@ -142,6 +141,6 @@ __all__ = [
     'plotLimbMap', 'plotJacobians', 'plotJacobianSweep', 'plotRetrievalProfile',
     'sweep_colors', 'get_species_color', 'get_species_cmap', 'STYLE',
     'get_rfm_dir', 'get_hitran_path',
-    'get_exec_path', 'get_atm_dir', 'get_aria_dir',
+    'get_exec_path', 'get_atm_dir',
     'write_config', '_CONFIG_FILE',
 ]
