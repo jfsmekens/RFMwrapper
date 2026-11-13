@@ -6,6 +6,7 @@ No RFM executable required.
 
 Run with:
     pytest test/test_xsc.py -v
+    RFMWRAPPER_SF6_DIR=/path/to/SF6 pytest test/test_xsc.py -v   # include SF6 file tests
 """
 import os
 import glob
@@ -16,7 +17,9 @@ import pytest
 from rfmwrapper import readXSCHeaders, concatXSC, __XSCPATH__
 from rfmwrapper.functions import _parseXSCHeader
 
-SF6_DIR = '/Users/js4247/Downloads/SF6'
+# HITRAN SF6 cross-section files (https://hitran.org/xsc/); the tests that
+# need them skip unless RFMWRAPPER_SF6_DIR points at a directory holding them.
+SF6_DIR = os.environ.get('RFMWRAPPER_SF6_DIR', '')
 
 _HDR_NARROW = "                 SF6  925.0012  955.0020   5477 180.00  20.3 2.099E-16 0.01            SF6    air 15"
 _HDR_WIDE   = "                 SF6  779.9997 1100.0002 127439  189.2 201.4 1.435E-160.022            SF6    air113"

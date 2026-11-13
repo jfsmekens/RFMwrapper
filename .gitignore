@@ -22,6 +22,7 @@ test/demo_output/
 
 # IDE
 .idea/
+.run/
 .vscode/
 
 # Atmospheric-LUT master build cache (large, regenerable)

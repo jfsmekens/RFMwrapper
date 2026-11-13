@@ -32,17 +32,35 @@ Python dependencies (`numpy`, `scipy`, `matplotlib`, `pandas`, `openpyxl`, `cmcr
 
 ## Installation
 
+Install the latest version straight from GitHub (no clone needed):
+
 ```bash
-conda create -n rfm python=3.11
-conda activate rfm
+pip install "git+https://github.com/jfsmekens/RFMwrapper.git"
+```
+
+There are no tagged releases on PyPI; `pip install --upgrade` with the same URL
+picks up fixes. To work on the code, clone it and install in editable mode:
+
+```bash
+git clone https://github.com/jfsmekens/RFMwrapper.git
+cd RFMwrapper
 pip install -e .
 ```
 
+A fresh environment is recommended, e.g. `conda create -n rfm python=3.11`.
+The package is pure Python; the only compiled component is RFM itself, which
+you install separately (below).
+
 ### Installing RFM
 
-`rfmwrapper` drives RFM; it does not ship it. RFM is distributed by Oxford
-(AOPP) on personal request — see the
+`rfmwrapper` drives RFM; it does not ship it, and never will. RFM is written
+and distributed by Anu Dudhia (University of Oxford, AOPP), who supplies it
+on request by email; it carries no public licence and must not be
+redistributed. Request a copy as described on the
+[RFM home page](https://eodg.atm.ox.ac.uk/RFM/), then follow the
 [RFM installation guide](https://eodg.atm.ox.ac.uk/RFM/sum/rfm_installation.html).
+RFM also needs a HITRAN line database, which you obtain from
+[hitran.org](https://hitran.org) under HITRAN's own terms.
 
 **If you already have RFM compiled**, skip to [Configure paths](#configure-paths)
 and point `rfm_dir` at it. Nothing needs rebuilding. The tree only has to carry
@@ -320,6 +338,17 @@ rw.listSensors()   # list all bundled sensors
 
 Convolution is performed in wavenumber space (∫L(ν)·T(ν)dν / ∫T(ν)dν) for all output types. Use `listPlatforms(sensor)` for multi-platform instruments (e.g. `'GOES-ABI'`) and `readRTTOVsrf(path)` to import custom RTTOV-format SRF files.
 
+**Sources of the bundled response functions.** Every sensor except ASTER and
+MMT-gasCam was converted from the spectral response functions published by the
+EUMETSAT NWP SAF for RTTOV
+(<https://nwp-saf.eumetsat.int/site/software/rttov/download/coefficients/spectral-response-functions/>),
+which in turn come from the instrument teams (NASA, NOAA, EUMETSAT, ESA, JMA,
+USGS); the first line of each CSV names the original file.
+`tools/download_rttov_srfs.py` regenerates them. ASTER: spectral response
+functions published by NASA JPL. MMT-gasCam: transmission curves of the
+instrument's filters (part numbers ANDV16927-16938) as supplied by the
+manufacturer, Andover Corporation.
+
 ---
 
 ## Limb geometry
@@ -547,6 +576,32 @@ with rw.RFM('layer', 2000, 2600, 10, gas='SO2') as model:
 
 ---
 
+## Citing
+
+If you publish results computed with `rfmwrapper`, cite RFM, which does the
+radiative transfer:
+
+> Dudhia, A. (2017). The Reference Forward Model (RFM). *Journal of
+> Quantitative Spectroscopy and Radiative Transfer*, 186, 243–253.
+> doi:[10.1016/j.jqsrt.2016.06.018](https://doi.org/10.1016/j.jqsrt.2016.06.018)
+
+Cite also the edition of HITRAN your RFM runs use, for example:
+
+> Gordon, I. E., et al. (2022). The HITRAN2020 molecular spectroscopic
+> database. *Journal of Quantitative Spectroscopy and Radiative Transfer*, 277,
+> 107949. doi:[10.1016/j.jqsrt.2021.107949](https://doi.org/10.1016/j.jqsrt.2021.107949)
+
+The RFM author asks to be sent a reference for each publication that uses RFM
+(see the [RFM home page](https://eodg.atm.ox.ac.uk/RFM/)). When you convolve
+with a bundled filter, cite or acknowledge that instrument's response function
+source (see [Filter convolution](#filter-convolution)).
+
+---
+
 ## License
 
-This wrapper is provided as-is for research use. The RFM itself is subject to its own [license terms](http://eodg.atm.ox.ac.uk/RFM/).
+`rfmwrapper` is released under the [MIT License](LICENSE).
+
+The licence covers this Python package only. RFM, HITRAN and the standard
+atmosphere files are not part of this repository and are subject to their
+authors' own terms; RFM in particular is not redistributable.

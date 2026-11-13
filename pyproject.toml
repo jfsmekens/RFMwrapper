@@ -1,13 +1,15 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfmwrapper"
 version = "0.6.0"
 description = "Python wrapper for the Reference Forward Model (RFM) radiative transfer code"
-authors = [{name = "jfsmekens"}]
-license = {text = "MIT"}
+authors = [{name = "Jean-François Smekens"}]
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
 requires-python = ">=3.9"
 keywords = ["radiative-transfer", "atmosphere", "spectroscopy", "RFM", "FTIR"]
 dependencies = [
@@ -23,7 +25,9 @@ dependencies = [
 rfm-viewer = "rfmwrapper.rfm_viewer:launch"
 
 [project.urls]
-Repository = "https://github.com/jfsmekens/rfmwrapper"
+Repository = "https://github.com/jfsmekens/RFMwrapper"
+Issues = "https://github.com/jfsmekens/RFMwrapper/issues"
+"RFM" = "https://eodg.atm.ox.ac.uk/RFM/"
 
 [tool.setuptools.packages.find]
 where = ["."]
